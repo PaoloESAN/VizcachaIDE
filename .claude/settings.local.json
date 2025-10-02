@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go:*)",
+      "Bash(pip install:*)",
+      "Bash(dlv:*)",
+      "Bash(python:*)",
+      "Bash(timeout:*)",
+      "Bash(distGoIDE.exe)",
+      "Bash(.distGoIDE.exe)",
+      "Bash(cmd /c start:*)",
+      "Bash(del test_input.go)",
+      "Bash(printf \"Juan\\n25\\n\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
