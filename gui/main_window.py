@@ -33,6 +33,22 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("VizcachaIDE - Beginner-friendly Go IDE")
         self.setGeometry(100, 100, 1200, 800)
 
+        # Set window icon
+        import os
+        import sys
+
+        # Get the base path (different for bundled and development)
+        if getattr(sys, 'frozen', False):
+            # Running in PyInstaller bundle
+            base_path = sys._MEIPASS
+        else:
+            # Running in development
+            base_path = os.path.dirname(os.path.dirname(__file__))
+
+        icon_path = os.path.join(base_path, "logo.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         # Create central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -159,6 +175,13 @@ class MainWindow(QMainWindow):
 
         run_menu.addSeparator()
 
+        self.build_action = QAction("&Build", self)
+        self.build_action.setShortcut("Ctrl+B")
+        self.build_action.triggered.connect(self.build_code)
+        run_menu.addAction(self.build_action)
+
+        run_menu.addSeparator()
+
         configure_action = QAction("&Configure...", self)
         configure_action.triggered.connect(self.show_settings)
         run_menu.addAction(configure_action)
@@ -196,6 +219,13 @@ class MainWindow(QMainWindow):
         self.toggle_breakpoint_action.triggered.connect(self.toggle_breakpoint)
         debug_menu.addAction(self.toggle_breakpoint_action)
 
+        # Help menu
+        help_menu = menubar.addMenu("&Help")
+
+        about_action = QAction("&About", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
     def create_toolbar(self):
         """Create toolbar with common actions"""
         toolbar = QToolBar("Main Toolbar")
@@ -212,6 +242,11 @@ class MainWindow(QMainWindow):
         self.stop_btn_action.triggered.connect(self.stop_execution)
         self.stop_btn_action.setEnabled(False)
         toolbar.addAction(self.stop_btn_action)
+
+        # Build button
+        self.build_btn_action = QAction("🔨 Build", self)
+        self.build_btn_action.triggered.connect(self.build_code)
+        toolbar.addAction(self.build_btn_action)
 
         toolbar.addSeparator()
 
@@ -309,10 +344,51 @@ class MainWindow(QMainWindow):
         self.stop_action.setEnabled(True)
         self.stop_btn_action.setEnabled(True)
 
+        # Mark console as waiting for input
+        self.console.set_waiting_for_input(True)
+
         self.runner.run(current_file)
-        # Enable input after a short delay to allow process to start
-        from PyQt5.QtCore import QTimer
-        QTimer.singleShot(200, self.console.enable_input)
+
+    def build_code(self):
+        """Build the current Go code"""
+        current_file = self.editor.current_file_path()
+        if not current_file:
+            QMessageBox.warning(self, "No File", "Please save your file before building.")
+            return
+
+        self.console.clear()
+        self.console.append_output(f"Building: {current_file}\n")
+        self.console.append_output("-" * 50 + "\n")
+
+        import os
+        import subprocess
+
+        # Get Go executable path
+        go_path = self.settings.value("env/go_path", "go")
+        if not go_path:
+            go_path = "go"
+
+        # Get output executable name
+        base_name = os.path.splitext(os.path.basename(current_file))[0]
+        output_name = base_name + ".exe" if os.name == 'nt' else base_name
+
+        try:
+            # Build the Go file
+            result = subprocess.run(
+                [go_path, "build", "-o", output_name, os.path.basename(current_file)],
+                cwd=os.path.dirname(current_file),
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode == 0:
+                self.console.append_success(f"\n[Build successful: {output_name}]\n")
+            else:
+                self.console.append_error(result.stderr)
+                self.console.append_error(f"\n[Build failed with code {result.returncode}]\n")
+
+        except Exception as e:
+            self.console.append_error(f"\nError: {str(e)}\n")
 
     def stop_execution(self):
         """Stop the current execution"""
@@ -321,6 +397,7 @@ class MainWindow(QMainWindow):
 
     def on_execution_finished(self, exit_code):
         """Handle execution finished"""
+        self.console.set_waiting_for_input(False)
         self.console.disable_input()
         self.run_action.setEnabled(True)
         self.run_btn_action.setEnabled(True)
@@ -335,11 +412,6 @@ class MainWindow(QMainWindow):
     def on_console_input(self, text):
         """Handle input submitted from console"""
         self.runner.write_input(text)
-        # Check if process is still running before re-enabling input
-        # Wait longer to allow program output to appear first
-        from PyQt5.QtCore import QTimer, QProcess
-        if self.runner.process and self.runner.process.state() == QProcess.Running:
-            QTimer.singleShot(150, self.console.enable_input)
 
     # Debug operations
     def start_debug(self):
@@ -435,6 +507,40 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'toolbar'):
             for toolbar in self.findChildren(QToolBar):
                 toolbar.setVisible(show_toolbar)
+
+    def show_about(self):
+        """Show About dialog"""
+        import os
+        import sys
+        from PyQt5.QtGui import QPixmap
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("About VizcachaIDE")
+
+        # Set logo icon
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.dirname(__file__))
+
+        logo_path = os.path.join(base_path, "logo.png")
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            msg_box.setIconPixmap(pixmap.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        msg_box.setText(
+            "<h3>VizcachaIDE</h3>"
+            "<p>Beginner-friendly Go IDE</p>"
+        )
+        msg_box.setInformativeText(
+            "<p><b>Author:</b> Marks Calderon<br>"
+            "<b>Contact:</b> hola@codeplai.pe<br>"
+            "CEO of Codeplai Games<br>"
+            "Peru</p>"
+            "<p><b>License:</b> MIT License<br>"
+            "Copyright (c) 2025 Marks Calderon - Codeplai Games</p>"
+        )
+        msg_box.exec_()
 
     def restore_state(self):
         """Restore window state from settings"""

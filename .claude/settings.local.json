@@ -10,7 +10,9 @@
       "Bash(.distGoIDE.exe)",
       "Bash(cmd /c start:*)",
       "Bash(del test_input.go)",
-      "Bash(printf \"Juan\\n25\\n\")"
+      "Bash(printf \"Juan\\n25\\n\")",
+      "Bash(pip uninstall:*)",
+      "Bash(pyinstaller:*)"
     ],
     "deny": [],
     "ask": []

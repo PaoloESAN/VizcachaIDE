@@ -18,6 +18,7 @@ class ConsoleWidget(QTextEdit):
         # Input state
         self.input_enabled = False
         self.input_start_pos = 0
+        self.waiting_for_input = False
 
         # Set font
         font = QFont("Consolas", 10)
@@ -47,6 +48,11 @@ class ConsoleWidget(QTextEdit):
         cursor.insertText(text)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
+
+        # Auto-enable input when we see output (program might be waiting)
+        if self.waiting_for_input and not self.input_enabled:
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(100, self.enable_input)
 
     def append_error(self, text):
         """Append error text in red"""
@@ -79,9 +85,12 @@ class ConsoleWidget(QTextEdit):
     def clear(self):
         """Clear console output"""
         super().clear()
+        self.waiting_for_input = False
 
     def enable_input(self):
         """Enable user input mode"""
+        if self.input_enabled:
+            return
         self.input_enabled = True
         self.setReadOnly(False)
         self.input_start_pos = self.textCursor().position()
@@ -91,6 +100,10 @@ class ConsoleWidget(QTextEdit):
         """Disable user input mode"""
         self.input_enabled = False
         self.setReadOnly(True)
+
+    def set_waiting_for_input(self, waiting):
+        """Mark that program is waiting for input"""
+        self.waiting_for_input = waiting
 
     def keyPressEvent(self, event):
         """Handle key press events for input"""

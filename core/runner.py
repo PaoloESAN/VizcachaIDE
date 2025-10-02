@@ -73,8 +73,6 @@ class GoRunner(QObject):
             go_path = "go"
 
         # Use 'go run' to compile and execute
-        # Set unbuffered mode to support interactive input
-        self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.start(go_path, ["run", os.path.basename(file_path)])
 
     def stop(self):
@@ -116,7 +114,6 @@ class GoRunner(QObject):
     def write_input(self, text):
         """Write input to the running process"""
         if self.process and self.process.state() == QProcess.Running:
-            # Always add exactly one newline (Scanln needs \n to read)
             text = text.rstrip('\n') + '\n'
             self.process.write(text.encode('utf-8'))
             self.process.waitForBytesWritten()
