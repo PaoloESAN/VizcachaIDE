@@ -188,7 +188,7 @@ class AutocompleteWidget(QListWidget):
 
     def keyPressEvent(self, event):
         """Handle key press events"""
-        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter or event.key() == Qt.Key_Tab:
             # Accept current selection
             current_item = self.currentItem()
             if current_item:

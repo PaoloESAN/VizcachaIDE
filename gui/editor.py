@@ -345,17 +345,32 @@ class CodeEditor(QPlainTextEdit):
             text: Text to insert
         """
         cursor = self.textCursor()
+        position = cursor.position()
+        code = self.toPlainText()
 
-        # Remove the partial word being typed
-        cursor.select(cursor.WordUnderCursor)
-        partial_word = cursor.selectedText()
+        word_start = position
+        while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] == '_'):
+            word_start -= 1
 
-        # Only remove if we're actually in a word
-        if partial_word and (partial_word[0].isalnum() or partial_word[0] == '_'):
+        has_dot_before = word_start > 0 and code[word_start - 1] == '.'
+
+        partial_word = code[word_start:position]
+
+        if partial_word:
+            cursor.setPosition(word_start)
+            cursor.setPosition(position, cursor.KeepAnchor)
             cursor.removeSelectedText()
 
         # Insert the completion
         cursor.insertText(text)
+
+        new_position = cursor.position()
+        has_content_after = new_position < len(code) and code[new_position:new_position + 1] in '("\'['
+
+        if not has_content_after and (has_dot_before or text in ['append', 'len', 'make', 'print', 'println']):
+            cursor.insertText('()')
+            cursor.setPosition(cursor.position() - 1)
+
         self.setTextCursor(cursor)
 
     def keyPressEvent(self, event):
@@ -367,7 +382,7 @@ class CodeEditor(QPlainTextEdit):
 
         # Handle autocomplete widget navigation if it's visible
         if self.autocomplete_widget and self.autocomplete_widget.isVisible():
-            if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
+            if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape, Qt.Key_Tab):
                 self.autocomplete_widget.keyPressEvent(event)
                 return
 
