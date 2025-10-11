@@ -361,11 +361,13 @@ class CodeEditor(QPlainTextEdit):
             cursor.setPosition(position, cursor.KeepAnchor)
             cursor.removeSelectedText()
 
-        # Insert the completion
+        # Insert completion
         cursor.insertText(text)
 
+        # Check what's after cursor
         new_position = cursor.position()
-        has_content_after = new_position < len(code) and code[new_position:new_position + 1] in '("\'['
+        updated_code = self.toPlainText()
+        has_content_after = new_position < len(updated_code) and updated_code[new_position:new_position + 1] in '("\'['
 
         if not has_content_after and (has_dot_before or text in ['append', 'len', 'make', 'print', 'println']):
             cursor.insertText('()')
@@ -375,16 +377,98 @@ class CodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         """Handle key press events for auto-indentation and autocomplete"""
-        # Check for Ctrl+Space (autocomplete trigger)
+        # Ctrl+Space triggers autocomplete
         if event.key() == Qt.Key_Space and event.modifiers() == Qt.ControlModifier:
             self.show_autocomplete()
             return
 
-        # Handle autocomplete widget navigation if it's visible
+        # Auto-pair completion for brackets, quotes, etc.
+        pairs = {
+            '(': ')',
+            '[': ']',
+            '{': '}',
+            '"': '"',
+            "'": "'"
+        }
+        
+        text = event.text()
+        if text in pairs:
+            cursor = self.textCursor()
+            
+            # Check if next char is closing pair (skip insertion)
+            position = cursor.position()
+            code = self.toPlainText()
+            next_char = code[position] if position < len(code) else ''
+            
+            # Skip if typing closing char and it's already there
+            if text in (')', ']', '}') and next_char == text:
+                cursor.movePosition(cursor.Right)
+                self.setTextCursor(cursor)
+                return
+            
+            # Insert pair
+            closing = pairs[text]
+            cursor.insertText(text + closing)
+            cursor.movePosition(cursor.Left)
+            self.setTextCursor(cursor)
+            return
+        
+        # Skip over closing bracket if it's already there
+        if text in (')', ']', '}'):
+            cursor = self.textCursor()
+            position = cursor.position()
+            code = self.toPlainText()
+            next_char = code[position] if position < len(code) else ''
+            
+            if next_char == text:
+                cursor.movePosition(cursor.Right)
+                self.setTextCursor(cursor)
+                return
+
+        # Handle autocomplete if visible
         if self.autocomplete_widget and self.autocomplete_widget.isVisible():
             if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape, Qt.Key_Tab):
                 self.autocomplete_widget.keyPressEvent(event)
                 return
+            elif event.key() == Qt.Key_Backspace:
+                # Backspace: update text then filter
+                super().keyPressEvent(event)
+                self.update_autocomplete_filter()
+                return
+            elif event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End):
+                # Close on cursor move
+                self.autocomplete_widget.hide()
+                super().keyPressEvent(event)
+                return
+            elif event.text() and (event.text().isalnum() or event.text() == '_'):
+                # Typing: update and filter
+                super().keyPressEvent(event)
+                self.update_autocomplete_filter()
+                return
+            elif event.text() in ('(', ')', '[', ']', '{', '}', ';', ',', ' ', '.'):
+                # Close on special chars
+                self.autocomplete_widget.hide()
+                super().keyPressEvent(event)
+                return
+
+        # Delete pair on backspace if between matching brackets
+        if event.key() == Qt.Key_Backspace:
+            cursor = self.textCursor()
+            position = cursor.position()
+            code = self.toPlainText()
+            
+            if position > 0 and position < len(code):
+                prev_char = code[position - 1]
+                next_char = code[position]
+                
+                # Check if between matching pair
+                pairs = {'(': ')', '[': ']', '{': '}', '"': '"', "'": "'"}
+                if prev_char in pairs and pairs[prev_char] == next_char:
+                    # Delete both characters
+                    cursor.movePosition(cursor.Left)
+                    cursor.movePosition(cursor.Right, cursor.KeepAnchor, 2)
+                    cursor.removeSelectedText()
+                    return
 
         # Auto-indent on new line
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
@@ -403,3 +487,30 @@ class CodeEditor(QPlainTextEdit):
                 self.textCursor().insertText('    ')  # 4 spaces
         else:
             super().keyPressEvent(event)
+
+    def update_autocomplete_filter(self):
+        """Update autocomplete filter based on current word being typed"""
+        if not self.autocomplete_widget or not self.autocomplete_widget.isVisible():
+            return
+
+        cursor = self.textCursor()
+        position = cursor.position()
+        code = self.toPlainText()
+
+        # Find word start (after dot)
+        word_start = position
+        while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] == '_'):
+            word_start -= 1
+
+        # Check for dot before word
+        if word_start > 0 and code[word_start - 1] == '.':
+            # Get partial word
+            partial_word = code[word_start:position]
+            
+            # Filter completions
+            if not self.autocomplete_widget.filter_completions(partial_word):
+                pass
+        else:
+            # No dot, hide
+            self.autocomplete_widget.hide()
+
