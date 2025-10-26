@@ -354,6 +354,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No File", "Please save your file before running.")
             return
 
+        # Save the file before running
+        if not self.save_file():
+            # If save failed or was cancelled, don't run
+            return
+
         self.console.clear()
         self.run_action.setEnabled(False)
         self.run_btn_action.setEnabled(False)
@@ -370,6 +375,11 @@ class MainWindow(QMainWindow):
         current_file = self.editor.current_file_path()
         if not current_file:
             QMessageBox.warning(self, "No File", "Please save your file before building.")
+            return
+
+        # Save the file before building
+        if not self.save_file():
+            # If save failed or was cancelled, don't build
             return
 
         self.console.clear()
@@ -459,6 +469,11 @@ class MainWindow(QMainWindow):
         current_file = self.editor.current_file_path()
         if not current_file:
             QMessageBox.warning(self, "No File", "Please save your file before debugging.")
+            return
+
+        # Save the file before debugging
+        if not self.save_file():
+            # If save failed or was cancelled, don't debug
             return
 
         self.console.clear()
