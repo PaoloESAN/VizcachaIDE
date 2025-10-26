@@ -5,6 +5,7 @@ Go code analyzer for autocomplete suggestions
 import subprocess
 import json
 import os
+import re
 
 
 class GoAnalyzer:
@@ -28,66 +29,21 @@ class GoAnalyzer:
 
         # Built-in functions
         self.builtins = {
-            'append': {
-                'signature': '(slice, elements...)',
-                'doc': 'Appends elements to the end of a slice and returns the updated slice.'
-            },
-            'cap': {
-                'signature': '(v Type)',
-                'doc': 'Returns the capacity of v, according to its type.'
-            },
-            'close': {
-                'signature': '(c chan<- Type)',
-                'doc': 'Closes a channel, indicating that no more values will be sent.'
-            },
-            'complex': {
-                'signature': '(r, i FloatType)',
-                'doc': 'Constructs a complex value from floating-point real and imaginary parts.'
-            },
-            'copy': {
-                'signature': '(dst, src []Type)',
-                'doc': 'Copies elements from source slice to destination slice.'
-            },
-            'delete': {
-                'signature': '(m map[Type]Type1, key Type)',
-                'doc': 'Deletes the element with the specified key from the map.'
-            },
-            'imag': {
-                'signature': '(c ComplexType)',
-                'doc': 'Returns the imaginary part of the complex number.'
-            },
-            'len': {
-                'signature': '(v Type)',
-                'doc': 'Returns the length of v, according to its type.'
-            },
-            'make': {
-                'signature': '(Type, size ...IntegerType)',
-                'doc': 'Allocates and initializes an object of type slice, map, or channel.'
-            },
-            'new': {
-                'signature': '(Type)',
-                'doc': 'Allocates memory for a variable of the given type and returns a pointer to it.'
-            },
-            'panic': {
-                'signature': '(v interface{})',
-                'doc': 'Stops normal execution of the current goroutine.'
-            },
-            'print': {
-                'signature': '(args ...Type)',
-                'doc': 'Prints arguments to standard error.'
-            },
-            'println': {
-                'signature': '(args ...Type)',
-                'doc': 'Prints arguments to standard error with spaces and newline.'
-            },
-            'real': {
-                'signature': '(c ComplexType)',
-                'doc': 'Returns the real part of the complex number.'
-            },
-            'recover': {
-                'signature': '()',
-                'doc': 'Regains control of a panicking goroutine.'
-            },
+            'append': {'signature': '(slice, elements...)', 'doc': 'Appends elements to the end of a slice and returns the updated slice.'},
+            'cap': {'signature': '(v Type)', 'doc': 'Returns the capacity of v, according to its type.'},
+            'close': {'signature': '(c chan<- Type)', 'doc': 'Closes a channel, indicating that no more values will be sent.'},
+            'complex': {'signature': '(r, i FloatType)', 'doc': 'Constructs a complex value from floating-point real and imaginary parts.'},
+            'copy': {'signature': '(dst, src []Type)', 'doc': 'Copies elements from source slice to destination slice.'},
+            'delete': {'signature': '(m map[Type]Type1, key Type)', 'doc': 'Deletes the element with the specified key from the map.'},
+            'imag': {'signature': '(c ComplexType)', 'doc': 'Returns the imaginary part of the complex number.'},
+            'len': {'signature': '(v Type)', 'doc': 'Returns the length of v, according to its type.'},
+            'make': {'signature': '(Type, size ...IntegerType)', 'doc': 'Allocates and initializes an object of type slice, map, or channel.'},
+            'new': {'signature': '(Type)', 'doc': 'Allocates memory for a variable of the given type and returns a pointer to it.'},
+            'panic': {'signature': '(v interface{})', 'doc': 'Stops normal execution of the current goroutine.'},
+            'print': {'signature': '(args ...Type)', 'doc': 'Prints arguments to standard error.'},
+            'println': {'signature': '(args ...Type)', 'doc': 'Prints arguments to standard error with spaces and newline.'},
+            'real': {'signature': '(c ComplexType)', 'doc': 'Returns the real part of the complex number.'},
+            'recover': {'signature': '()', 'doc': 'Regains control of a panicking goroutine.'},
         }
 
         # Common standard library packages and their functions
@@ -113,6 +69,7 @@ class GoAnalyzer:
                 'ToLower': 'Returns s with all Unicode letters mapped to lowercase.',
                 'ToUpper': 'Returns s with all Unicode letters mapped to uppercase.',
                 'Trim': 'Returns a slice of s with leading and trailing cutset removed.',
+                'TrimSpace': 'Returns a slice of s with leading and trailing whitespace removed.',
             },
             'strconv': {
                 'Atoi': 'Converts string to int.',
@@ -132,6 +89,8 @@ class GoAnalyzer:
                 'Setenv': 'Sets the value of the environment variable.',
                 'Remove': 'Removes the named file or directory.',
                 'Mkdir': 'Creates a new directory with the specified name.',
+                'ReadFile': 'Reads the named file and returns the contents.',
+                'WriteFile': 'Writes data to the named file.',
             },
             'io': {
                 'Copy': 'Copies from src to dst until EOF.',
@@ -155,7 +114,88 @@ class GoAnalyzer:
                 'Sqrt': 'Returns the square root of x.',
                 'Round': 'Returns the nearest integer, rounding half away from zero.',
             },
+            'encoding/json': {
+                'Marshal': 'Returns the JSON encoding of v.',
+                'Unmarshal': 'Parses the JSON-encoded data and stores the result.',
+            },
+            'net/http': {
+                'Get': 'Issues a GET to the specified URL.',
+                'Post': 'Issues a POST to the specified URL.',
+                'ListenAndServe': 'Listens on the TCP network address and calls Serve.',
+            },
+            'bufio': {
+                'NewReader': 'Returns a new Reader.',
+                'NewScanner': 'Returns a new Scanner to read from r.',
+            },
         }
+        
+        # User-defined elements
+        self.imported_packages = {}
+        self.user_defined_vars = set()
+        self.user_defined_funcs = {}
+        self.gopls_available = self._check_gopls()
+
+    def _check_gopls(self):
+        """Check if gopls is available"""
+        try:
+            subprocess.run(['gopls', 'version'], capture_output=True, timeout=2)
+            return True
+        except:
+            return False
+    
+    def _analyze_code(self, code):
+        """Analyze code to extract imports, variables, and functions"""
+        self.imported_packages = {}
+        self.user_defined_vars = set()
+        self.user_defined_funcs = {}
+        
+        # Parse imports (single line, aliased, and multi-line blocks)
+        import_pattern = r'import\s+(?:"([^"]+)"|(\w+)\s+"([^"]+)"|\(([^)]+)\))'
+        for match in re.finditer(import_pattern, code, re.MULTILINE):
+            if match.group(1):
+                # Simple import: import "fmt"
+                pkg_path = match.group(1)
+                pkg_name = pkg_path.split('/')[-1]
+                self.imported_packages[pkg_name] = pkg_path
+            elif match.group(2):
+                # Aliased import: import f "fmt"
+                alias = match.group(2)
+                pkg_path = match.group(3)
+                self.imported_packages[alias] = pkg_path
+            elif match.group(4):
+                # Multi-line import block
+                imports_block = match.group(4)
+                for line in imports_block.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('//'):
+                        pkg_match = re.match(r'(?:(\w+)\s+)?"([^"]+)"', line)
+                        if pkg_match:
+                            alias = pkg_match.group(1)
+                            pkg_path = pkg_match.group(2)
+                            if alias:
+                                self.imported_packages[alias] = pkg_path
+                            else:
+                                pkg_name = pkg_path.split('/')[-1]
+                                self.imported_packages[pkg_name] = pkg_path
+        
+        # Parse variable declarations (var, const)
+        var_pattern = r'(?:var|const)\s+(\w+)'
+        for match in re.finditer(var_pattern, code):
+            self.user_defined_vars.add(match.group(1))
+        
+        # Parse short variable declarations (:=)
+        short_var_pattern = r'(\w+)\s*:='
+        for match in re.finditer(short_var_pattern, code):
+            var_name = match.group(1)
+            if var_name != '_':
+                self.user_defined_vars.add(var_name)
+        
+        # Parse function declarations
+        func_pattern = r'func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)'
+        for match in re.finditer(func_pattern, code):
+            func_name = match.group(1)
+            params = match.group(2)
+            self.user_defined_funcs[func_name] = params
 
     def get_completions(self, code, cursor_position, file_path=None):
         """Get autocomplete suggestions for the given code and cursor position
@@ -168,20 +208,23 @@ class GoAnalyzer:
         Returns:
             List of completion dictionaries
         """
+        # Analyze the code first
+        self._analyze_code(code)
+        
         # Get the word being typed
         word_start = cursor_position
         while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] == '_'):
             word_start -= 1
 
         prefix = code[word_start:cursor_position].lower()
-
         completions = []
 
         # Check if we're after a package name (e.g., "fmt.")
         package_match = self._get_package_context(code, cursor_position)
         if package_match:
-            # Show methods from that package
             package_name = package_match
+            
+            # Check standard library
             if package_name in self.stdlib:
                 for method, doc in self.stdlib[package_name].items():
                     if method.lower().startswith(prefix):
@@ -191,6 +234,18 @@ class GoAnalyzer:
                             'doc': doc,
                             'kind': 'function'
                         })
+            # Check imported packages
+            elif package_name in self.imported_packages:
+                pkg_path = self.imported_packages[package_name]
+                if pkg_path in self.stdlib:
+                    for method, doc in self.stdlib[pkg_path].items():
+                        if method.lower().startswith(prefix):
+                            completions.append({
+                                'name': method,
+                                'signature': f'{package_name}.{method}(...)',
+                                'doc': doc,
+                                'kind': 'function'
+                            })
         else:
             # Show keywords
             for keyword in self.keywords:
@@ -198,7 +253,7 @@ class GoAnalyzer:
                     completions.append({
                         'name': keyword,
                         'signature': '',
-                        'doc': f'Go keyword: {keyword}',
+                        'doc': f'Go keyword',
                         'kind': 'const'
                     })
 
@@ -208,7 +263,7 @@ class GoAnalyzer:
                     completions.append({
                         'name': type_name,
                         'signature': '',
-                        'doc': f'Built-in type: {type_name}',
+                        'doc': f'Built-in type',
                         'kind': 'type'
                     })
 
@@ -222,20 +277,39 @@ class GoAnalyzer:
                         'kind': 'function'
                     })
 
-            # Add common packages if prefix matches
-            for package in self.stdlib.keys():
-                if package.startswith(prefix):
+            # Show user-defined variables
+            for var_name in self.user_defined_vars:
+                if var_name.lower().startswith(prefix):
+                    completions.append({
+                        'name': var_name,
+                        'signature': '',
+                        'doc': 'User-defined variable',
+                        'kind': 'variable'
+                    })
+
+            # Show user-defined functions
+            for func_name, params in self.user_defined_funcs.items():
+                if func_name.lower().startswith(prefix):
+                    completions.append({
+                        'name': func_name,
+                        'signature': f'({params})',
+                        'doc': 'User-defined function',
+                        'kind': 'function'
+                    })
+
+            # Show imported packages
+            for package in self.imported_packages.keys():
+                if package.lower().startswith(prefix):
                     completions.append({
                         'name': package,
                         'signature': '',
-                        'doc': f'Package: {package}',
+                        'doc': f'Imported package: {self.imported_packages[package]}',
                         'kind': 'package'
                     })
 
         # Sort by relevance (exact prefix match first, then alphabetically)
         completions.sort(key=lambda x: (not x['name'].lower().startswith(prefix), x['name'].lower()))
-
-        return completions[:20]  # Limit to 20 suggestions
+        return completions[:30]  # Limit to 30 suggestions
 
     def _get_package_context(self, code, cursor_position):
         """Check if cursor is after a package name (e.g., 'fmt.')
@@ -258,27 +332,6 @@ class GoAnalyzer:
             i -= 1
             while i >= 0 and (code[i].isalnum() or code[i] == '_'):
                 i -= 1
-
             package_name = code[i + 1:end]
             return package_name
-
         return None
-
-    def get_completions_with_gopls(self, file_path, line, column):
-        """Get completions using gopls (Go language server)
-
-        This is a more advanced approach that requires gopls to be installed.
-        For now, this is a placeholder for future enhancement.
-
-        Args:
-            file_path: Path to the Go file
-            line: Line number (1-indexed)
-            column: Column number (1-indexed)
-
-        Returns:
-            List of completion dictionaries
-        """
-        # This would use gopls for real completions
-        # Example command: gopls completion -json file.go:line:column
-        # For now, we use the built-in approach above
-        pass

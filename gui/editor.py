@@ -5,7 +5,7 @@ Code editor widget with Go syntax highlighting and breakpoint support
 from PyQt5.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
 from PyQt5.QtCore import Qt, QRect, QSize, pyqtSignal
 from PyQt5.QtGui import (QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
-                         QTextCharFormat, QPalette, QKeySequence)
+                         QTextCharFormat, QPalette, QKeySequence, QTextCursor)
 import re
 
 
@@ -377,11 +377,17 @@ class CodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         """Handle key press events for auto-indentation and autocomplete"""
-        # Ctrl+Space triggers autocomplete
-        if event.key() == Qt.Key_Space and event.modifiers() == Qt.ControlModifier:
-            self.show_autocomplete()
-            return
-
+        # Check for Ctrl+S or other important shortcuts - let them pass through
+        if event.modifiers() == Qt.ControlModifier:
+            if event.key() == Qt.Key_S:
+                # Let Ctrl+S pass through to parent handlers
+                super().keyPressEvent(event)
+                return
+            elif event.key() == Qt.Key_Space:
+                # Ctrl+Space triggers autocomplete
+                self.show_autocomplete()
+                return
+        
         # Auto-pair completion for brackets, quotes, etc.
         pairs = {
             '(': ')',
@@ -445,7 +451,7 @@ class CodeEditor(QPlainTextEdit):
                 super().keyPressEvent(event)
                 self.update_autocomplete_filter()
                 return
-            elif event.text() in ('(', ')', '[', ']', '{', '}', ';', ',', ' ', '.'):
+            elif event.text() in ('(', ')', '[', ']', '{', '}', ';', ',', ' '):
                 # Close on special chars
                 self.autocomplete_widget.hide()
                 super().keyPressEvent(event)
@@ -487,9 +493,42 @@ class CodeEditor(QPlainTextEdit):
                 self.textCursor().insertText('    ')  # 4 spaces
         else:
             super().keyPressEvent(event)
+            
+            # Trigger autocomplete check for regular typing
+            if event.text() and (event.text().isalnum() or event.text() in ('_', '.')):
+                self._trigger_autocomplete_check()
+    
+    def _trigger_autocomplete_check(self):
+        """Check if we should trigger autocomplete based on current context"""
+        cursor = self.textCursor()
+        position = cursor.position()
+        code = self.toPlainText()
+        
+        if position == 0:
+            return
+            
+        prev_char = code[position - 1] if position > 0 else ''
+        
+        # Always show after dot
+        if prev_char == '.':
+            self.show_autocomplete()
+            return
+        
+        # Find word being typed
+        word_start = position
+        while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] == '_'):
+            word_start -= 1
+        
+        word_length = position - word_start
+        
+        # Show after 2+ chars if after dot, or 3+ chars otherwise
+        if word_length >= 2:
+            if word_start > 0 and code[word_start - 1] == '.':
+                self.show_autocomplete()
+            elif word_length >= 3:
+                self.show_autocomplete()
 
     def update_autocomplete_filter(self):
-        """Update autocomplete filter based on current word being typed"""
         if not self.autocomplete_widget or not self.autocomplete_widget.isVisible():
             return
 
@@ -497,20 +536,18 @@ class CodeEditor(QPlainTextEdit):
         position = cursor.position()
         code = self.toPlainText()
 
-        # Find word start (after dot)
         word_start = position
         while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] == '_'):
             word_start -= 1
 
-        # Check for dot before word
         if word_start > 0 and code[word_start - 1] == '.':
-            # Get partial word
             partial_word = code[word_start:position]
-            
-            # Filter completions
             if not self.autocomplete_widget.filter_completions(partial_word):
                 pass
         else:
-            # No dot, hide
-            self.autocomplete_widget.hide()
-
+            if word_start < position:
+                partial_word = code[word_start:position]
+                if not self.autocomplete_widget.filter_completions(partial_word):
+                    self.autocomplete_widget.hide()
+            else:
+                self.autocomplete_widget.hide()
