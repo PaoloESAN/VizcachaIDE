@@ -388,13 +388,17 @@ class MainWindow(QMainWindow):
         base_name = os.path.splitext(os.path.basename(current_file))[0]
         output_name = base_name + ".exe" if os.name == 'nt' else base_name
 
+        # Get environment variables
+        env = self._get_go_environment()
+
         try:
             # Build the Go file
             result = subprocess.run(
                 [go_path, "build", "-o", output_name, os.path.basename(current_file)],
                 cwd=os.path.dirname(current_file),
                 capture_output=True,
-                text=True
+                text=True,
+                env=env
             )
 
             if result.returncode == 0:
@@ -405,6 +409,26 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self.console.append_error(f"\nError: {str(e)}\n")
+    
+    def _get_go_environment(self):
+        """Get environment variables for Go execution
+        
+        Returns:
+            dict: Environment variables with Go paths
+        """
+        import os
+        
+        # Check if using local Go installation
+        is_local = self.settings.value("env/go_local", False, type=bool)
+        
+        if is_local:
+            # Use local Go installation environment
+            from core.go_installer import GoInstaller
+            installer = GoInstaller()
+            return installer.get_go_env()
+        else:
+            # Return system environment
+            return os.environ.copy()
 
     def stop_execution(self):
         """Stop the current execution"""
@@ -525,7 +549,7 @@ class MainWindow(QMainWindow):
                 toolbar.setVisible(show_toolbar)
 
     def open_terminal(self):
-        """Open integrated terminal in current file directory"""
+        """Open integrated terminal in current file directory with Go environment"""
         import os
         import subprocess
         import platform
@@ -540,44 +564,91 @@ class MainWindow(QMainWindow):
             # Use workspace directory or home directory
             work_dir = os.path.expanduser("~")
 
+        # Get Go environment variables
+        env = self._get_go_environment()
+
         # Detect OS and open appropriate terminal
         system = platform.system()
         
         try:
             if system == "Windows":
-                # Windows: Open Windows Terminal, PowerShell, or CMD
-                # Try Windows Terminal first (modern)
-                try:
-                    subprocess.Popen(['wt', '-d', work_dir], shell=True)
-                except:
-                    # Fallback to PowerShell
-                    try:
-                        subprocess.Popen(['powershell', '-NoExit', '-Command', f'cd "{work_dir}"'], 
-                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
-                    except:
-                        # Final fallback to CMD
-                        subprocess.Popen(['cmd', '/K', f'cd /d "{work_dir}"'], 
-                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                # Windows: Create a batch file to set environment and open terminal
+                batch_file = os.path.join(work_dir, "_vizcacha_terminal.bat")
+                with open(batch_file, 'w') as f:
+                    f.write('@echo off\n')
+                    # Set environment variables
+                    if 'GOROOT' in env:
+                        f.write(f'set GOROOT={env["GOROOT"]}\n')
+                    if 'GOPATH' in env:
+                        f.write(f'set GOPATH={env["GOPATH"]}\n')
+                    if 'PATH' in env:
+                        f.write(f'set PATH={env["PATH"]}\n')
+                    f.write(f'cd /d "{work_dir}"\n')
+                    f.write('echo VizcachaIDE Terminal - Go environment ready\n')
+                    f.write('echo.\n')
+                    f.write('go version\n')
+                    f.write('echo.\n')
+                    f.write('cmd /K\n')
+                
+                # Open CMD with batch file
+                subprocess.Popen(['cmd', '/C', 'start', 'cmd', '/K', batch_file],
+                               cwd=work_dir,
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+                
             elif system == "Darwin":  # macOS
-                # macOS: Open Terminal.app
-                script = f'tell application "Terminal" to do script "cd \\"{work_dir}\\""'
+                # macOS: Create a script and open Terminal
+                script_file = os.path.join(work_dir, ".vizcacha_terminal.sh")
+                with open(script_file, 'w') as f:
+                    f.write('#!/bin/bash\n')
+                    if 'GOROOT' in env:
+                        f.write(f'export GOROOT="{env["GOROOT"]}"\n')
+                    if 'GOPATH' in env:
+                        f.write(f'export GOPATH="{env["GOPATH"]}"\n')
+                    if 'PATH' in env:
+                        f.write(f'export PATH="{env["PATH"]}"\n')
+                    f.write(f'cd "{work_dir}"\n')
+                    f.write('echo "VizcachaIDE Terminal - Go environment ready"\n')
+                    f.write('go version\n')
+                    f.write('bash\n')
+                
+                os.chmod(script_file, 0o755)
+                
+                script = f'tell application "Terminal" to do script "{script_file}"'
                 subprocess.Popen(['osascript', '-e', script])
-            else:  # Linux and others
-                # Linux: Try common terminals
+                
+            else:  # Linux
+                # Linux: Create a script and open terminal
+                script_file = os.path.join(work_dir, ".vizcacha_terminal.sh")
+                with open(script_file, 'w') as f:
+                    f.write('#!/bin/bash\n')
+                    if 'GOROOT' in env:
+                        f.write(f'export GOROOT="{env["GOROOT"]}"\n')
+                    if 'GOPATH' in env:
+                        f.write(f'export GOPATH="{env["GOPATH"]}"\n')
+                    if 'PATH' in env:
+                        f.write(f'export PATH="{env["PATH"]}"\n')
+                    f.write(f'cd "{work_dir}"\n')
+                    f.write('echo "VizcachaIDE Terminal - Go environment ready"\n')
+                    f.write('go version\n')
+                    f.write('bash\n')
+                
+                os.chmod(script_file, 0o755)
+                
                 terminals = ['gnome-terminal', 'konsole', 'xfce4-terminal', 'xterm']
                 for terminal in terminals:
                     try:
                         if terminal == 'gnome-terminal':
-                            subprocess.Popen([terminal, '--working-directory', work_dir])
+                            subprocess.Popen([terminal, '--', 'bash', '-c', f'bash {script_file}'])
                         elif terminal == 'konsole':
-                            subprocess.Popen([terminal, '--workdir', work_dir])
+                            subprocess.Popen([terminal, '-e', 'bash', script_file])
                         else:
-                            subprocess.Popen([terminal], cwd=work_dir)
+                            subprocess.Popen([terminal, '-e', f'bash {script_file}'])
                         break
                     except FileNotFoundError:
                         continue
             
             self.console.append_success(f"\n[Terminal opened in: {work_dir}]\n")
+            self.console.append_success("[Go environment configured automatically]\n")
         except Exception as e:
             QMessageBox.warning(self, "Terminal Error", 
                               f"Failed to open terminal:\n{str(e)}\n\nPlease open terminal manually.")

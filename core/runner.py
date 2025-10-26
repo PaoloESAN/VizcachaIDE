@@ -4,7 +4,7 @@ Go code runner for executing Go programs
 
 import subprocess
 import os
-from PyQt5.QtCore import QObject, pyqtSignal, QProcess, QSettings
+from PyQt5.QtCore import QObject, pyqtSignal, QProcess, QSettings, QProcessEnvironment
 
 
 class GoRunner(QObject):
@@ -18,6 +18,50 @@ class GoRunner(QObject):
         super().__init__()
         self.process = None
         self.settings = QSettings()
+
+    def get_go_environment(self):
+        """Get environment variables for Go execution
+        
+        Returns:
+            QProcessEnvironment: Environment with Go paths configured
+        """
+        env = QProcessEnvironment.systemEnvironment()
+        
+        # Check if using local Go installation
+        is_local = self.settings.value("env/go_local", False, type=bool)
+        
+        if is_local:
+            # Use local Go installation environment
+            from core.go_installer import GoInstaller
+            installer = GoInstaller()
+            
+            local_go = installer.get_local_go_path()
+            if os.path.exists(local_go):
+                go_env = installer.get_go_env()
+                
+                # Convert dict to QProcessEnvironment
+                for key, value in go_env.items():
+                    env.insert(key, value)
+        else:
+            # Use system Go with custom settings
+            gopath = self.settings.value("env/gopath", "")
+            if gopath:
+                env.insert("GOPATH", gopath)
+
+            goroot = self.settings.value("env/goroot", "")
+            if goroot:
+                env.insert("GOROOT", goroot)
+        
+        # Add extra environment variables
+        extra_vars = self.settings.value("env/extra_vars", "")
+        if extra_vars:
+            for line in extra_vars.split('\n'):
+                line = line.strip()
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    env.insert(key.strip(), value.strip())
+        
+        return env
 
     def run(self, file_path):
         """Run a Go file
@@ -34,27 +78,7 @@ class GoRunner(QObject):
         self.process.setWorkingDirectory(os.path.dirname(file_path))
 
         # Set up environment variables
-        env = self.process.processEnvironment()
-
-        # Add custom GOPATH if configured
-        gopath = self.settings.value("env/gopath", "")
-        if gopath:
-            env.insert("GOPATH", gopath)
-
-        # Add custom GOROOT if configured
-        goroot = self.settings.value("env/goroot", "")
-        if goroot:
-            env.insert("GOROOT", goroot)
-
-        # Add extra environment variables
-        extra_vars = self.settings.value("env/extra_vars", "")
-        if extra_vars:
-            for line in extra_vars.split('\n'):
-                line = line.strip()
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    env.insert(key.strip(), value.strip())
-
+        env = self.get_go_environment()
         self.process.setProcessEnvironment(env)
 
         # Connect signals
@@ -67,7 +91,7 @@ class GoRunner(QObject):
         self.output_received.emit(f"Running: {file_path}\n")
         self.output_received.emit("-" * 50 + "\n")
 
-        # Get Go executable path (use custom if configured)
+        # Get Go executable path
         go_path = self.settings.value("env/go_path", "go")
         if not go_path:
             go_path = "go"
