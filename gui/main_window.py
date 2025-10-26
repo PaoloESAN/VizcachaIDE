@@ -219,6 +219,14 @@ class MainWindow(QMainWindow):
         self.toggle_breakpoint_action.triggered.connect(self.toggle_breakpoint)
         debug_menu.addAction(self.toggle_breakpoint_action)
 
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        terminal_action = QAction("Open &Terminal", self)
+        terminal_action.setShortcut("Ctrl+`")
+        terminal_action.triggered.connect(self.open_terminal)
+        tools_menu.addAction(terminal_action)
+
         # Help menu
         help_menu = menubar.addMenu("&Help")
 
@@ -247,6 +255,14 @@ class MainWindow(QMainWindow):
         self.build_btn_action = QAction("🔨 Build", self)
         self.build_btn_action.triggered.connect(self.build_code)
         toolbar.addAction(self.build_btn_action)
+
+        toolbar.addSeparator()
+
+        # Terminal button
+        self.terminal_btn_action = QAction("⚡ Terminal", self)
+        self.terminal_btn_action.triggered.connect(self.open_terminal)
+        self.terminal_btn_action.setToolTip("Open terminal in current file directory")
+        toolbar.addAction(self.terminal_btn_action)
 
         toolbar.addSeparator()
 
@@ -507,6 +523,64 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'toolbar'):
             for toolbar in self.findChildren(QToolBar):
                 toolbar.setVisible(show_toolbar)
+
+    def open_terminal(self):
+        """Open integrated terminal in current file directory"""
+        import os
+        import subprocess
+        import platform
+
+        # Get current file path
+        current_file = self.editor.current_file_path()
+        
+        if current_file:
+            # Get directory of current file
+            work_dir = os.path.dirname(current_file)
+        else:
+            # Use workspace directory or home directory
+            work_dir = os.path.expanduser("~")
+
+        # Detect OS and open appropriate terminal
+        system = platform.system()
+        
+        try:
+            if system == "Windows":
+                # Windows: Open Windows Terminal, PowerShell, or CMD
+                # Try Windows Terminal first (modern)
+                try:
+                    subprocess.Popen(['wt', '-d', work_dir], shell=True)
+                except:
+                    # Fallback to PowerShell
+                    try:
+                        subprocess.Popen(['powershell', '-NoExit', '-Command', f'cd "{work_dir}"'], 
+                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                    except:
+                        # Final fallback to CMD
+                        subprocess.Popen(['cmd', '/K', f'cd /d "{work_dir}"'], 
+                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+            elif system == "Darwin":  # macOS
+                # macOS: Open Terminal.app
+                script = f'tell application "Terminal" to do script "cd \\"{work_dir}\\""'
+                subprocess.Popen(['osascript', '-e', script])
+            else:  # Linux and others
+                # Linux: Try common terminals
+                terminals = ['gnome-terminal', 'konsole', 'xfce4-terminal', 'xterm']
+                for terminal in terminals:
+                    try:
+                        if terminal == 'gnome-terminal':
+                            subprocess.Popen([terminal, '--working-directory', work_dir])
+                        elif terminal == 'konsole':
+                            subprocess.Popen([terminal, '--workdir', work_dir])
+                        else:
+                            subprocess.Popen([terminal], cwd=work_dir)
+                        break
+                    except FileNotFoundError:
+                        continue
+            
+            self.console.append_success(f"\n[Terminal opened in: {work_dir}]\n")
+        except Exception as e:
+            QMessageBox.warning(self, "Terminal Error", 
+                              f"Failed to open terminal:\n{str(e)}\n\nPlease open terminal manually.")
 
     def show_about(self):
         """Show About dialog"""
