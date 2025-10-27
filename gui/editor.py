@@ -436,6 +436,42 @@ class CodeEditor(QPlainTextEdit):
         position = cursor.position()
         code = self.toPlainText()
 
+        # Check if we're in an import context
+        is_import = self._is_in_import_context(code, position)
+        
+        if is_import:
+            # For imports, find the start of the word (including / for paths)
+            word_start = position
+            while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] in ('_', '/')):
+                word_start -= 1
+            
+            # Check if we're already inside quotes
+            # Look backwards to find opening quote
+            search_start = max(0, position - 100)  # Search in reasonable range
+            text_before = code[search_start:position]
+            
+            # Count quotes before cursor position
+            last_quote_before = text_before.rfind('"')
+            text_after = code[position:min(len(code), position + 100)]
+            first_quote_after = text_after.find('"')
+            
+            # If there's a quote before and after, we're inside quotes
+            inside_quotes = (last_quote_before != -1 and first_quote_after != -1)
+            
+            # Remove partial word
+            if word_start < position:
+                cursor.setPosition(word_start)
+                cursor.setPosition(position, cursor.KeepAnchor)
+                cursor.removeSelectedText()
+            
+            # Insert package name with or without quotes depending on context
+            if inside_quotes:
+                cursor.insertText(text)
+            else:
+                cursor.insertText(f'"{text}"')
+            self.setTextCursor(cursor)
+            return
+        
         word_start = position
         while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] == '_'):
             word_start -= 1
@@ -622,6 +658,20 @@ class CodeEditor(QPlainTextEdit):
             text_before_cursor = block_text[:cursor_pos_in_block]
             text_after_cursor = block_text[cursor_pos_in_block:]
             
+            # Check if we're in import context
+            code = self.toPlainText()
+            position = cursor.position()
+            
+            # Check if the current line or previous lines have import (
+            lines_before = code[:position].split('\n')
+            in_import_block = False
+            for line in reversed(lines_before[-10:]):  # Check last 10 lines
+                if 'import' in line and '(' in line:
+                    in_import_block = True
+                    break
+                if ')' in line:  # Found closing paren first
+                    break
+            
             # Check if cursor is between braces {}
             between_braces = text_before_cursor.rstrip().endswith('{') and text_after_cursor.lstrip().startswith('}')
             
@@ -641,7 +691,10 @@ class CodeEditor(QPlainTextEdit):
                 self.textCursor().insertText(' ' * indent)
             
             # Add extra indentation if needed
-            if needs_extra_indent:
+            if in_import_block:
+                # Inside import parentheses, add tab
+                self.textCursor().insertText('\t')
+            elif needs_extra_indent:
                 self.textCursor().insertText('    ')  # 4 spaces
             elif between_braces:
                 # Special case: cursor between braces
@@ -714,3 +767,47 @@ class CodeEditor(QPlainTextEdit):
                     self.autocomplete_widget.hide()
             else:
                 self.autocomplete_widget.hide()
+    
+    def _is_in_import_context(self, code, cursor_position):
+        """Check if cursor is within an import statement
+        
+        Args:
+            code: Full code text
+            cursor_position: Current cursor position
+            
+        Returns:
+            True if cursor is in import context, False otherwise
+        """
+        # Get text before cursor
+        text_before = code[:cursor_position]
+        
+        # Find the last import statement
+        last_import = text_before.rfind('import')
+        if last_import == -1:
+            return False
+        
+        # Get text from import to cursor
+        text_from_import = code[last_import:cursor_position]
+        
+        # Check if we're in parentheses import block: import ( ... )
+        open_paren = text_from_import.find('(')
+        if open_paren != -1:
+            # Check if there's a closing paren before cursor
+            close_paren = text_from_import.find(')', open_paren)
+            if close_paren == -1:  # No closing paren yet
+                # We're inside the import block
+                return True
+        
+        # Check for single line import: import "..."
+        remaining = text_from_import[6:].lstrip()  # Skip 'import'
+        if '\n' not in remaining:
+            # Check if we're inside quotes or ready to type
+            if '"' in remaining:
+                # Count quotes to see if we're inside
+                quote_count = remaining.count('"')
+                if quote_count == 1 or quote_count % 2 == 1:
+                    # Odd number of quotes, we're inside a string
+                    return True
+            return True
+        
+        return False

@@ -59,6 +59,39 @@ class GoAnalyzer:
                 'kind': 'snippet'
             },
         }
+        
+        # Common Go standard library packages for import suggestions
+        self.stdlib_packages = [
+            ('fmt', 'Package fmt implements formatted I/O'),
+            ('os', 'Package os provides a platform-independent interface to operating system functionality'),
+            ('io', 'Package io provides basic interfaces to I/O primitives'),
+            ('strings', 'Package strings implements simple functions to manipulate UTF-8 encoded strings'),
+            ('strconv', 'Package strconv implements conversions to and from string representations'),
+            ('time', 'Package time provides functionality for measuring and displaying time'),
+            ('math', 'Package math provides basic constants and mathematical functions'),
+            ('bufio', 'Package bufio implements buffered I/O'),
+            ('bytes', 'Package bytes implements functions for the manipulation of byte slices'),
+            ('encoding/json', 'Package json implements encoding and decoding of JSON'),
+            ('encoding/xml', 'Package xml implements a simple XML 1.0 parser'),
+            ('net/http', 'Package http provides HTTP client and server implementations'),
+            ('net/url', 'Package url parses URLs and implements query escaping'),
+            ('path', 'Package path implements utility routines for manipulating slash-separated paths'),
+            ('path/filepath', 'Package filepath implements utility routines for manipulating filename paths'),
+            ('regexp', 'Package regexp implements regular expression search'),
+            ('sort', 'Package sort provides primitives for sorting slices and user-defined collections'),
+            ('sync', 'Package sync provides basic synchronization primitives'),
+            ('errors', 'Package errors implements functions to manipulate errors'),
+            ('log', 'Package log implements a simple logging package'),
+            ('flag', 'Package flag implements command-line flag parsing'),
+            ('context', 'Package context defines the Context type'),
+            ('crypto/md5', 'Package md5 implements the MD5 hash algorithm'),
+            ('crypto/sha256', 'Package sha256 implements the SHA224 and SHA256 hash algorithms'),
+            ('database/sql', 'Package sql provides a generic interface around SQL databases'),
+            ('html/template', 'Package template implements data-driven templates for HTML output'),
+            ('text/template', 'Package template implements data-driven templates for text output'),
+            ('reflect', 'Package reflect implements run-time reflection'),
+            ('runtime', 'Package runtime contains operations that interact with Go runtime system'),
+        ]
 
         # Built-in types
         self.types = [
@@ -249,6 +282,31 @@ class GoAnalyzer:
         # Analyze the code first
         self._analyze_code(code)
         
+        # Check if we're in an import context
+        if self._is_in_import_context(code, cursor_position):
+            # Get the partial package name being typed
+            word_start = cursor_position
+            # Include / for package paths
+            while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] in ('_', '/')):
+                word_start -= 1
+            
+            prefix = code[word_start:cursor_position].lower()
+            completions = []
+            
+            # Show standard library packages
+            for pkg_name, pkg_doc in self.stdlib_packages:
+                if pkg_name.lower().startswith(prefix) or prefix in pkg_name.lower():
+                    completions.append({
+                        'name': pkg_name,
+                        'signature': '',
+                        'doc': pkg_doc,
+                        'kind': 'package'
+                    })
+            
+            # Sort by relevance
+            completions.sort(key=lambda x: (not x['name'].lower().startswith(prefix), x['name'].lower()))
+            return completions[:30]
+        
         # Get the word being typed
         word_start = cursor_position
         while word_start > 0 and (code[word_start - 1].isalnum() or code[word_start - 1] == '_'):
@@ -359,6 +417,55 @@ class GoAnalyzer:
         # Sort by relevance (exact prefix match first, then alphabetically)
         completions.sort(key=lambda x: (not x['name'].lower().startswith(prefix), x['name'].lower()))
         return completions[:30]  # Limit to 30 suggestions
+    
+    def _is_in_import_context(self, code, cursor_position):
+        """Check if cursor is within an import statement
+        
+        Args:
+            code: Full code text
+            cursor_position: Current cursor position
+            
+        Returns:
+            True if cursor is in import context, False otherwise
+        """
+        # Look backwards to find if we're in an import statement
+        # Search for import keyword and opening parenthesis or quote
+        
+        # Get text before cursor
+        text_before = code[:cursor_position]
+        
+        # Find the last import statement
+        last_import = text_before.rfind('import')
+        if last_import == -1:
+            return False
+        
+        # Get text from import to cursor
+        text_from_import = code[last_import:cursor_position]
+        
+        # Check if we're in parentheses import block: import ( ... )
+        open_paren = text_from_import.find('(')
+        if open_paren != -1:
+            # Check if there's a closing paren before cursor
+            close_paren = text_from_import.find(')', open_paren)
+            if close_paren == -1:  # No closing paren yet
+                # We're inside the import block
+                return True
+        
+        # Check for single line import: import "..."
+        # Make sure we're after 'import' and before any newline
+        remaining = text_from_import[6:].lstrip()  # Skip 'import'
+        if '\n' not in remaining:
+            # We're on the same line as import
+            # Check if we're inside quotes or ready to type
+            if '"' in remaining:
+                # Count quotes to see if we're inside
+                quote_count = remaining.count('"')
+                if quote_count == 1 or quote_count % 2 == 1:
+                    # Odd number of quotes, we're inside a string
+                    return True
+            return True
+        
+        return False
 
     def _get_package_context(self, code, cursor_position):
         """Check if cursor is after a package name (e.g., 'fmt.')
