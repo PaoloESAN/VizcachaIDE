@@ -19,6 +19,46 @@ class GoAnalyzer:
             'interface', 'map', 'package', 'range', 'return', 'select', 'struct',
             'switch', 'type', 'var'
         ]
+        
+        # Code snippets for common patterns
+        self.snippets = {
+            'fori': {
+                'name': 'fori',
+                'snippet': 'for i := 0; i < len; i++ {\n\t\n}',
+                'doc': 'For loop with index',
+                'kind': 'snippet'
+            },
+            'forr': {
+                'name': 'forr',
+                'snippet': 'for _, v := range collection {\n\t\n}',
+                'doc': 'For range loop',
+                'kind': 'snippet'
+            },
+            'forri': {
+                'name': 'forri',
+                'snippet': 'for i, v := range collection {\n\t\n}',
+                'doc': 'For range loop with index',
+                'kind': 'snippet'
+            },
+            'forw': {
+                'name': 'forw',
+                'snippet': 'for condition {\n\t\n}',
+                'doc': 'While-style for loop',
+                'kind': 'snippet'
+            },
+            'ife': {
+                'name': 'ife',
+                'snippet': 'if err != nil {\n\treturn err\n}',
+                'doc': 'If error check',
+                'kind': 'snippet'
+            },
+            'iferr': {
+                'name': 'iferr',
+                'snippet': 'if err != nil {\n\tlog.Fatal(err)\n}',
+                'doc': 'If error with log.Fatal',
+                'kind': 'snippet'
+            },
+        }
 
         # Built-in types
         self.types = [
@@ -133,15 +173,13 @@ class GoAnalyzer:
         self.imported_packages = {}
         self.user_defined_vars = set()
         self.user_defined_funcs = {}
-        self.gopls_available = self._check_gopls()
+        # Don't check gopls at initialization - it's slow and we don't use it
+        self.gopls_available = False
 
     def _check_gopls(self):
         """Check if gopls is available"""
-        try:
-            subprocess.run(['gopls', 'version'], capture_output=True, timeout=2)
-            return True
-        except:
-            return False
+        # Disabled - not currently used and slows down initialization
+        return False
     
     def _analyze_code(self, code):
         """Analyze code to extract imports, variables, and functions"""
@@ -255,6 +293,17 @@ class GoAnalyzer:
                         'signature': '',
                         'doc': f'Go keyword',
                         'kind': 'const'
+                    })
+            
+            # Show snippets
+            for snippet_key, snippet_data in self.snippets.items():
+                if snippet_key.startswith(prefix) or snippet_data['name'].startswith(prefix):
+                    completions.append({
+                        'name': snippet_data['name'],
+                        'signature': '',
+                        'doc': snippet_data['doc'],
+                        'kind': 'snippet',
+                        'snippet': snippet_data['snippet']
                     })
 
             # Show types

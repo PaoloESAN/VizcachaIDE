@@ -409,12 +409,13 @@ class ThemeManager:
                 QTextEdit, QPlainTextEdit {
                     background-color: #1e1e1e;
                     color: #d4d4d4;
-                    border: 1px solid #3e3e42;
+                    border: 1px solid #555555;
                     selection-background-color: #264f78;
                 }
                 QTextEdit {
                     background-color: #3c3c3c;
                     color: #cccccc;
+                    border: 1px solid #555555;
                 }
                 QCheckBox {
                     color: #cccccc;

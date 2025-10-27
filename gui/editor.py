@@ -313,13 +313,14 @@ class CodeEditor(QPlainTextEdit):
 
     def show_autocomplete(self):
         """Show autocomplete suggestions"""
-        # Lazy initialization
+        # Lazy initialization - only create when first needed
         if self.autocomplete_widget is None:
             from gui.autocomplete import AutocompleteWidget
-            from core.go_analyzer import GoAnalyzer
-
             self.autocomplete_widget = AutocompleteWidget(self)
             self.autocomplete_widget.completion_selected.connect(self.insert_completion)
+        
+        if self.analyzer is None:
+            from core.go_analyzer import GoAnalyzer
             self.analyzer = GoAnalyzer()
 
         # Get current code and cursor position
@@ -342,7 +343,7 @@ class CodeEditor(QPlainTextEdit):
         """Insert selected completion text
 
         Args:
-            text: Text to insert
+            text: Text to insert (can be simple text or snippet)
         """
         cursor = self.textCursor()
         position = cursor.position()
@@ -361,7 +362,43 @@ class CodeEditor(QPlainTextEdit):
             cursor.setPosition(position, cursor.KeepAnchor)
             cursor.removeSelectedText()
 
-        # Insert completion
+        # Check if this is a snippet
+        snippet_text = None
+        if self.analyzer and hasattr(self.analyzer, 'snippets'):
+            for snippet_key, snippet_data in self.analyzer.snippets.items():
+                if snippet_data['name'] == text:
+                    snippet_text = snippet_data['snippet']
+                    break
+        
+        if snippet_text:
+            # Insert snippet with proper indentation
+            current_line = cursor.block().text()
+            indent = len(current_line) - len(current_line.lstrip())
+            
+            # Split snippet by lines and add indentation
+            lines = snippet_text.split('\n')
+            formatted_lines = []
+            for i, line in enumerate(lines):
+                if i == 0:
+                    formatted_lines.append(line)
+                else:
+                    # Add base indentation + line's relative indentation
+                    line_indent = len(line) - len(line.lstrip('\t'))
+                    formatted_lines.append(' ' * indent + ' ' * (line_indent * 4) + line.lstrip('\t'))
+            
+            final_text = '\n'.join(formatted_lines)
+            cursor.insertText(final_text)
+            
+            # Try to position cursor at the empty line inside the block
+            # Find the position of \n\t\n pattern (empty line in block)
+            if '\n\t\n' in snippet_text or (len(lines) > 1 and lines[1].strip() == ''):
+                # Move cursor up one line and to end of line
+                cursor.movePosition(cursor.Up)
+                cursor.movePosition(cursor.EndOfLine)
+                self.setTextCursor(cursor)
+            return
+
+        # Regular completion insertion
         cursor.insertText(text)
 
         # Check what's after cursor
@@ -480,17 +517,47 @@ class CodeEditor(QPlainTextEdit):
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             cursor = self.textCursor()
             block_text = cursor.block().text()
+            
+            # Calculate current indentation
             indent = len(block_text) - len(block_text.lstrip())
-
+            
+            # Check the actual cursor position in the line
+            cursor_pos_in_block = cursor.positionInBlock()
+            text_before_cursor = block_text[:cursor_pos_in_block]
+            text_after_cursor = block_text[cursor_pos_in_block:]
+            
+            # Check if cursor is between braces {}
+            between_braces = text_before_cursor.rstrip().endswith('{') and text_after_cursor.lstrip().startswith('}')
+            
+            # Check if line ends with opening brace
+            stripped_text = block_text.rstrip()
+            needs_extra_indent = False
+            
+            # Only check for keywords if we're at the end of the line and it ends with {
+            if stripped_text.endswith('{') and not between_braces:
+                needs_extra_indent = True
+            
+            # Insert new line
             super().keyPressEvent(event)
-
-            # Add same indentation to new line
+            
+            # Add base indentation
             if indent > 0:
                 self.textCursor().insertText(' ' * indent)
-
-            # Extra indent after { or :
-            if block_text.rstrip().endswith('{') or block_text.rstrip().endswith(':'):
+            
+            # Add extra indentation if needed
+            if needs_extra_indent:
                 self.textCursor().insertText('    ')  # 4 spaces
+            elif between_braces:
+                # Special case: cursor between braces
+                # Add indented line and closing brace line
+                self.textCursor().insertText('    ')  # 4 spaces for content
+                cursor_after_indent = self.textCursor()
+                cursor_after_indent.insertText('\n' + ' ' * indent)
+                self.setTextCursor(cursor_after_indent)
+                # Move cursor back to indented position
+                cursor_after_indent.movePosition(QTextCursor.Up)
+                cursor_after_indent.movePosition(QTextCursor.EndOfLine)
+                self.setTextCursor(cursor_after_indent)
         else:
             super().keyPressEvent(event)
             
@@ -527,7 +594,7 @@ class CodeEditor(QPlainTextEdit):
                 self.show_autocomplete()
             elif word_length >= 3:
                 self.show_autocomplete()
-
+    
     def update_autocomplete_filter(self):
         if not self.autocomplete_widget or not self.autocomplete_widget.isVisible():
             return

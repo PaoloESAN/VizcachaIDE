@@ -3,8 +3,8 @@ Autocomplete widget for code completion with documentation
 """
 
 from PyQt5.QtWidgets import (QListWidget, QListWidgetItem, QLabel, QVBoxLayout,
-                             QWidget, QStyledItemDelegate, QStyle)
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
+                             QWidget, QStyledItemDelegate, QStyle, QApplication)
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QEvent
 from PyQt5.QtGui import QFont, QColor, QPalette, QTextDocument
 
 
@@ -49,6 +49,7 @@ class CompletionItemDelegate(QStyledItemDelegate):
             'const': QColor("#0070C1"),
             'type': QColor("#267F99"),
             'package': QColor("#AF00DB"),
+            'snippet': QColor("#EA5C00"),
         }.get(kind, QColor("#000000"))
 
         painter.setPen(kind_color)
@@ -60,6 +61,7 @@ class CompletionItemDelegate(QStyledItemDelegate):
             'const': '◇',
             'type': '⊤',
             'package': '□',
+            'snippet': '{}',
         }.get(kind, '●')
         painter.drawText(option.rect.adjusted(5, 0, 0, 0), Qt.AlignVCenter, kind_symbol)
 
@@ -122,6 +124,9 @@ class AutocompleteWidget(QListWidget):
         # Set up appearance
         self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.setFocusPolicy(Qt.NoFocus)
+        
+        # Install event filter on application to detect clicks outside
+        QApplication.instance().installEventFilter(self)
 
         # Set custom delegate
         self.setItemDelegate(CompletionItemDelegate(self))
@@ -241,7 +246,28 @@ class AutocompleteWidget(QListWidget):
             if self.parent():
                 self.parent().keyPressEvent(event)
 
+    def eventFilter(self, obj, event):
+        """Filter events to detect clicks outside the widget"""
+        if event.type() == QEvent.MouseButtonPress:
+            if self.isVisible():
+                # Check if click is outside this widget
+                click_pos = event.globalPos()
+                widget_rect = self.rect()
+                widget_global_pos = self.mapToGlobal(widget_rect.topLeft())
+                widget_rect.moveTopLeft(widget_global_pos)
+                
+                # If click is outside, hide the widget
+                if not widget_rect.contains(click_pos):
+                    self.hide()
+                # If click is inside, let the event pass through normally
+                return False
+        return False
+    
     def focusOutEvent(self, event):
         """Hide when focus is lost"""
         self.hide()
         super().focusOutEvent(event)
+    
+    def hideEvent(self, event):
+        """Clean up when hiding"""
+        super().hideEvent(event)
