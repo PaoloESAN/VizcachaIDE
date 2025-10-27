@@ -13,6 +13,13 @@ import shutil
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
 
 
+def get_subprocess_flags():
+    """Get subprocess creation flags to hide console on Windows"""
+    if platform.system() == "Windows":
+        return subprocess.CREATE_NO_WINDOW
+    return 0
+
+
 class GoInstaller(QObject):
     """Manages Go installation and detection"""
     
@@ -36,7 +43,8 @@ class GoInstaller(QObject):
         if local_go and os.path.exists(local_go):
             try:
                 result = subprocess.run([local_go, "version"], 
-                                      capture_output=True, text=True, timeout=5)
+                                      capture_output=True, text=True, timeout=5,
+                                      creationflags=get_subprocess_flags())
                 if result.returncode == 0:
                     version = result.stdout.strip()
                     return (True, local_go, version)
@@ -46,7 +54,8 @@ class GoInstaller(QObject):
         # Check system installation
         try:
             result = subprocess.run(["go", "version"], 
-                                  capture_output=True, text=True, timeout=5)
+                                  capture_output=True, text=True, timeout=5,
+                                  creationflags=get_subprocess_flags())
             if result.returncode == 0:
                 version = result.stdout.strip()
                 return (True, "go", version)

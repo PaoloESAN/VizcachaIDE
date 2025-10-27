@@ -48,7 +48,11 @@ class MainWindow(QMainWindow):
             # Running in development
             base_path = os.path.dirname(os.path.dirname(__file__))
 
-        icon_path = os.path.join(base_path, "logo.png")
+        # Try both .ico and .png extensions
+        icon_path = os.path.join(base_path, "logo.ico")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(base_path, "logo.png")
+        
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -336,6 +340,13 @@ class MainWindow(QMainWindow):
 
         # Connect tabbed editor signals
         self.editor.active_file_changed.connect(self.on_active_file_changed)
+        self.editor.tab_created.connect(self.on_tab_created)
+
+    def on_tab_created(self, editor):
+        """Apply theme to newly created tab"""
+        if hasattr(self, 'theme_manager'):
+            theme = self.theme_manager.current_theme
+            self.apply_editor_theme(editor, theme)
 
     def on_active_file_changed(self, file_path):
         """Handle active file change in tabbed editor"""
@@ -379,9 +390,15 @@ class MainWindow(QMainWindow):
     def run_code(self):
         """Run the current Go code"""
         current_file = self.editor.current_file_path()
+        
+        # If no file path, open save dialog directly
         if not current_file:
-            QMessageBox.warning(self, "No File", "Please save your file before running.")
-            return
+            if not self.save_file_as():
+                # User cancelled save dialog
+                return
+            current_file = self.editor.current_file_path()
+            if not current_file:
+                return
 
         # Save the file before running
         if not self.save_file():
@@ -402,9 +419,15 @@ class MainWindow(QMainWindow):
     def build_code(self):
         """Build the current Go code"""
         current_file = self.editor.current_file_path()
+        
+        # If no file path, open save dialog directly
         if not current_file:
-            QMessageBox.warning(self, "No File", "Please save your file before building.")
-            return
+            if not self.save_file_as():
+                # User cancelled save dialog
+                return
+            current_file = self.editor.current_file_path()
+            if not current_file:
+                return
 
         # Save the file before building
         if not self.save_file():
@@ -417,6 +440,13 @@ class MainWindow(QMainWindow):
 
         import os
         import subprocess
+        import platform
+
+        # Get subprocess flags to hide console on Windows
+        def get_subprocess_flags():
+            if platform.system() == "Windows":
+                return subprocess.CREATE_NO_WINDOW
+            return 0
 
         # Get Go executable path
         go_path = self.settings.value("env/go_path", "go")
@@ -437,7 +467,8 @@ class MainWindow(QMainWindow):
                 cwd=os.path.dirname(current_file),
                 capture_output=True,
                 text=True,
-                env=env
+                env=env,
+                creationflags=get_subprocess_flags()
             )
 
             if result.returncode == 0:
@@ -781,12 +812,27 @@ class MainWindow(QMainWindow):
 
     def restore_state(self):
         """Restore window state from settings"""
-        last_file = self.settings.value("last_file", "")
-        if last_file:
-            self.editor.open_file(last_file)
-
-        # Apply settings on startup
+        # Apply settings and theme FIRST, before opening files
         self.apply_current_settings()
+        
+        # Now restore all open tabs with correct theme colors
+        open_files = self.settings.value("open_files", [])
+        if isinstance(open_files, str):
+            open_files = [open_files] if open_files else []
+        
+        import os
+        for file_path in open_files:
+            if file_path and os.path.exists(file_path):
+                self.editor.open_file(file_path)
+        
+        # Restore active tab index
+        active_tab = self.settings.value("active_tab", 0, type=int)
+        if active_tab < self.editor.count():
+            self.editor.setCurrentIndex(active_tab)
+        
+        # If no files were opened, keep the default empty tab
+        if self.editor.count() == 0:
+            pass  # The default tab is already created
 
     def closeEvent(self, event):
         """Handle window close event"""
@@ -796,4 +842,15 @@ class MainWindow(QMainWindow):
             if not self.editor.check_save_needed(tab_editor):
                 event.ignore()
                 return
+        
+        # Save open files state
+        open_files = []
+        for i in range(self.editor.count()):
+            file_path = self.editor.get_file_path(i)
+            if file_path:  # Only save tabs with actual files
+                open_files.append(file_path)
+        
+        self.settings.setValue("open_files", open_files)
+        self.settings.setValue("active_tab", self.editor.currentIndex())
+        
         event.accept()
