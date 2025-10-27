@@ -310,6 +310,93 @@ class CodeEditor(QPlainTextEdit):
         self.current_line = None
         self.setExtraSelections([])
         self.line_number_area.update()
+    
+    def move_line_up(self):
+        """Move current line or selection up"""
+        cursor = self.textCursor()
+        
+        # Single line handling
+        block_num = cursor.blockNumber()
+        
+        # Can't move up if on first line
+        if block_num == 0:
+            return
+        
+        # Remember cursor position within line
+        cursor_pos_in_line = cursor.positionInBlock()
+        
+        # Get current and previous line text
+        current_block = cursor.block()
+        current_text = current_block.text()
+        prev_block = current_block.previous()
+        prev_text = prev_block.text()
+        
+        # Store the start position of previous block
+        prev_start = prev_block.position()
+        
+        # Begin edit block for undo
+        cursor.beginEditBlock()
+        
+        # Select both lines (previous and current)
+        cursor.setPosition(prev_start)
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)  # newline
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)  # current line
+        
+        # Replace with swapped lines
+        cursor.insertText(current_text + '\n' + prev_text)
+        
+        cursor.endEditBlock()
+        
+        # Now set cursor position on the moved line
+        # The moved line is now at prev_start position
+        new_cursor = self.textCursor()
+        new_cursor.setPosition(prev_start + min(cursor_pos_in_line, len(current_text)))
+        self.setTextCursor(new_cursor)
+    
+    def move_line_down(self):
+        """Move current line or selection down"""
+        cursor = self.textCursor()
+        
+        # Single line handling
+        block_num = cursor.blockNumber()
+        total_blocks = self.document().blockCount()
+        
+        # Can't move down if on last line
+        if block_num >= total_blocks - 1:
+            return
+        
+        # Remember cursor position within line
+        cursor_pos_in_line = cursor.positionInBlock()
+        
+        # Get current and next line text
+        current_block = cursor.block()
+        current_text = current_block.text()
+        next_block = current_block.next()
+        next_text = next_block.text()
+        
+        # Store the start position of current block
+        current_start = current_block.position()
+        
+        # Begin edit block for undo
+        cursor.beginEditBlock()
+        
+        # Select both lines (current and next)
+        cursor.setPosition(current_start)
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)  # newline
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)  # next line
+        
+        # Replace with swapped lines
+        cursor.insertText(next_text + '\n' + current_text)
+        
+        cursor.endEditBlock()
+        
+        # Now set cursor position on the moved line
+        # The moved line is now at current_start + len(next_text) + 1
+        new_cursor = self.textCursor()
+        new_cursor.setPosition(current_start + len(next_text) + 1 + min(cursor_pos_in_line, len(current_text)))
+        self.setTextCursor(new_cursor)
 
     def show_autocomplete(self):
         """Show autocomplete suggestions"""
@@ -414,6 +501,15 @@ class CodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         """Handle key press events for auto-indentation and autocomplete"""
+        # Handle Alt+Up/Down for moving lines
+        if event.modifiers() == Qt.AltModifier:
+            if event.key() == Qt.Key_Up:
+                self.move_line_up()
+                return
+            elif event.key() == Qt.Key_Down:
+                self.move_line_down()
+                return
+        
         # Check for Ctrl+S or other important shortcuts - let them pass through
         if event.modifiers() == Qt.ControlModifier:
             if event.key() == Qt.Key_S:
