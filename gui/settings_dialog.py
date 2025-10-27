@@ -38,21 +38,21 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(tab_widget)
 
-        # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
 
-        self.ok_button = QPushButton("OK")
-        self.ok_button.clicked.connect(self.accept)
-        button_layout.addWidget(self.ok_button)
-
-        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button = QPushButton("Cancelar")
         self.cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_button)
-
-        self.apply_button = QPushButton("Apply")
-        self.apply_button.clicked.connect(self.apply_settings)
+        
+        self.apply_button = QPushButton("Aplicar")
+        self.apply_button.clicked.connect(self.apply_settings_only)
         button_layout.addWidget(self.apply_button)
+
+        self.ok_button = QPushButton("Aceptar")
+        self.ok_button.setDefault(True)
+        self.ok_button.clicked.connect(self.accept)
+        button_layout.addWidget(self.ok_button)
 
         layout.addLayout(button_layout)
 
@@ -167,7 +167,8 @@ class SettingsDialog(QDialog):
 
         # Preview
         self.font_preview_label = QLabel("Sample Text: func main() { fmt.Println(\"Hello\") }")
-        self.font_preview_label.setStyleSheet("padding: 10px; background-color: #F0F0F0;")
+        self.font_preview_label.setStyleSheet("padding: 10px; border: 1px solid palette(mid);")
+        self.font_preview_label.setAutoFillBackground(True)
         font_layout.addRow("Preview:", self.font_preview_label)
 
         # Update preview on change
@@ -209,67 +210,27 @@ class SettingsDialog(QDialog):
         return widget
 
     def create_appearance_tab(self):
-        """Create appearance settings tab"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Theme Group
-        theme_group = QGroupBox("Color Theme")
+        theme_group = QGroupBox("Tema de la aplicación")
         theme_layout = QFormLayout()
 
-        # Editor theme
-        self.editor_theme_combo = QComboBox()
-        self.editor_theme_combo.addItems(["Light", "Dark", "Solarized Light", "Solarized Dark"])
-        theme_layout.addRow("Editor Theme:", self.editor_theme_combo)
-
-        # Console theme
-        self.console_theme_combo = QComboBox()
-        self.console_theme_combo.addItems(["Dark", "Light"])
-        theme_layout.addRow("Console Theme:", self.console_theme_combo)
+        self.app_theme_combo = QComboBox()
+        self.app_theme_combo.addItems(["Dark", "Light", "Monokai", "Halloween"])
+        theme_layout.addRow("Tema:", self.app_theme_combo)
 
         theme_group.setLayout(theme_layout)
         layout.addWidget(theme_group)
 
-        # Colors Group
-        colors_group = QGroupBox("Custom Colors")
-        colors_layout = QFormLayout()
-
-        # Background color
-        bg_color_layout = QHBoxLayout()
-        self.bg_color_button = QPushButton("Choose Color")
-        self.bg_color_button.clicked.connect(lambda: self.choose_color('background'))
-        bg_color_layout.addWidget(self.bg_color_button)
-        self.bg_color_preview = QLabel("      ")
-        self.bg_color_preview.setStyleSheet("background-color: #FFFFFF; border: 1px solid #000;")
-        bg_color_layout.addWidget(self.bg_color_preview)
-        bg_color_layout.addStretch()
-        colors_layout.addRow("Background:", bg_color_layout)
-
-        # Text color
-        text_color_layout = QHBoxLayout()
-        self.text_color_button = QPushButton("Choose Color")
-        self.text_color_button.clicked.connect(lambda: self.choose_color('text'))
-        text_color_layout.addWidget(self.text_color_button)
-        self.text_color_preview = QLabel("      ")
-        self.text_color_preview.setStyleSheet("background-color: #000000; border: 1px solid #000;")
-        text_color_layout.addWidget(self.text_color_preview)
-        text_color_layout.addStretch()
-        colors_layout.addRow("Text:", text_color_layout)
-
-        colors_group.setLayout(colors_layout)
-        layout.addWidget(colors_group)
-
-        # UI Elements Group
-        ui_group = QGroupBox("UI Elements")
+        ui_group = QGroupBox("Elementos UI")
         ui_layout = QFormLayout()
 
-        # Show toolbar
-        self.show_toolbar_check = QCheckBox("Show toolbar")
+        self.show_toolbar_check = QCheckBox("Mostrar barra de herramientas")
         self.show_toolbar_check.setChecked(True)
         ui_layout.addRow("", self.show_toolbar_check)
 
-        # Show status bar
-        self.show_status_bar_check = QCheckBox("Show status bar")
+        self.show_status_bar_check = QCheckBox("Mostrar barra de estado")
         self.show_status_bar_check.setChecked(False)
         ui_layout.addRow("", self.show_status_bar_check)
 
@@ -308,37 +269,18 @@ class SettingsDialog(QDialog):
             self.delve_path_edit.setText(file_path)
 
     def update_font_preview(self):
-        """Update font preview label"""
         font_family = self.font_family_combo.currentText()
         font_size = self.font_size_spin.value()
         font = QFont(font_family, font_size)
         self.font_preview_label.setFont(font)
 
-    def choose_color(self, color_type):
-        """Choose a color using color picker"""
-        color = QColorDialog.getColor()
-        if color.isValid():
-            if color_type == 'background':
-                self.bg_color_preview.setStyleSheet(
-                    f"background-color: {color.name()}; border: 1px solid #000;"
-                )
-                self.settings.setValue("editor/background_color", color.name())
-            elif color_type == 'text':
-                self.text_color_preview.setStyleSheet(
-                    f"background-color: {color.name()}; border: 1px solid #000;"
-                )
-                self.settings.setValue("editor/text_color", color.name())
-
     def load_settings(self):
-        """Load settings from QSettings"""
-        # Environment
         self.go_path_edit.setText(self.settings.value("env/go_path", ""))
         self.gopath_edit.setText(self.settings.value("env/gopath", ""))
         self.goroot_edit.setText(self.settings.value("env/goroot", ""))
         self.delve_path_edit.setText(self.settings.value("env/delve_path", ""))
         self.env_vars_edit.setPlainText(self.settings.value("env/extra_vars", ""))
 
-        # Editor
         self.font_family_combo.setCurrentText(self.settings.value("editor/font_family", "Consolas"))
         self.font_size_spin.setValue(int(self.settings.value("editor/font_size", 11)))
         self.tab_size_spin.setValue(int(self.settings.value("editor/tab_size", 4)))
@@ -346,32 +288,19 @@ class SettingsDialog(QDialog):
         self.show_line_numbers_check.setChecked(self.settings.value("editor/show_line_numbers", True, type=bool))
         self.word_wrap_check.setChecked(self.settings.value("editor/word_wrap", False, type=bool))
 
-        # Appearance
-        self.editor_theme_combo.setCurrentText(self.settings.value("appearance/editor_theme", "Light"))
-        self.console_theme_combo.setCurrentText(self.settings.value("appearance/console_theme", "Dark"))
+        self.app_theme_combo.setCurrentText(self.settings.value("appearance/theme", "Dark"))
         self.show_toolbar_check.setChecked(self.settings.value("appearance/show_toolbar", True, type=bool))
         self.show_status_bar_check.setChecked(self.settings.value("appearance/show_status_bar", False, type=bool))
 
-        # Colors
-        bg_color = self.settings.value("editor/background_color", "#FFFFFF")
-        self.bg_color_preview.setStyleSheet(f"background-color: {bg_color}; border: 1px solid #000;")
-
-        text_color = self.settings.value("editor/text_color", "#000000")
-        self.text_color_preview.setStyleSheet(f"background-color: {text_color}; border: 1px solid #000;")
-
-        # Update font preview
         self.update_font_preview()
 
-    def apply_settings(self):
-        """Apply and save settings"""
-        # Environment
+    def apply_settings_only(self):
         self.settings.setValue("env/go_path", self.go_path_edit.text())
         self.settings.setValue("env/gopath", self.gopath_edit.text())
         self.settings.setValue("env/goroot", self.goroot_edit.text())
         self.settings.setValue("env/delve_path", self.delve_path_edit.text())
         self.settings.setValue("env/extra_vars", self.env_vars_edit.toPlainText())
 
-        # Editor
         self.settings.setValue("editor/font_family", self.font_family_combo.currentText())
         self.settings.setValue("editor/font_size", self.font_size_spin.value())
         self.settings.setValue("editor/tab_size", self.tab_size_spin.value())
@@ -379,22 +308,24 @@ class SettingsDialog(QDialog):
         self.settings.setValue("editor/show_line_numbers", self.show_line_numbers_check.isChecked())
         self.settings.setValue("editor/word_wrap", self.word_wrap_check.isChecked())
 
-        # Appearance
-        self.settings.setValue("appearance/editor_theme", self.editor_theme_combo.currentText())
-        self.settings.setValue("appearance/console_theme", self.console_theme_combo.currentText())
+        self.settings.setValue("appearance/theme", self.app_theme_combo.currentText())
         self.settings.setValue("appearance/show_toolbar", self.show_toolbar_check.isChecked())
         self.settings.setValue("appearance/show_status_bar", self.show_status_bar_check.isChecked())
 
-        QMessageBox.information(self, "Settings Saved",
-                               "Settings have been saved. Some changes may require restarting the IDE.")
+        QMessageBox.information(self, "Configuración aplicada",
+                               "La configuración se aplicó correctamente. Cierra y reabre el diálogo para ver los cambios.")
+        
+        if self.parent():
+            self.parent().apply_current_settings()
+
+    def apply_settings(self):
+        self.apply_settings_only()
 
     def accept(self):
-        """Save settings and close"""
-        self.apply_settings()
+        self.apply_settings_only()
         super().accept()
 
     def get_settings_dict(self):
-        """Get all settings as a dictionary"""
         return {
             'env': {
                 'go_path': self.go_path_edit.text(),
@@ -412,8 +343,7 @@ class SettingsDialog(QDialog):
                 'word_wrap': self.word_wrap_check.isChecked(),
             },
             'appearance': {
-                'editor_theme': self.editor_theme_combo.currentText(),
-                'console_theme': self.console_theme_combo.currentText(),
+                'theme': self.app_theme_combo.currentText(),
                 'show_toolbar': self.show_toolbar_check.isChecked(),
                 'show_status_bar': self.show_status_bar_check.isChecked(),
             }

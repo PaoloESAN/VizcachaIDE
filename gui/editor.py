@@ -46,15 +46,18 @@ class LineNumberArea(QWidget):
 
 
 class GoSyntaxHighlighter(QSyntaxHighlighter):
-    """Syntax highlighter for Go language"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, theme_colors=None):
         super().__init__(parent)
+        self.theme_colors = theme_colors or {}
         self.highlighting_rules = []
+        self.setup_formats()
 
-        # Keywords
+    def setup_formats(self):
+        self.highlighting_rules = []
+        
         keyword_format = QTextCharFormat()
-        keyword_format.setForeground(QColor("#0000FF"))
+        keyword_format.setForeground(QColor(self.theme_colors.get('keyword', "#0000FF")))
         keyword_format.setFontWeight(QFont.Bold)
 
         keywords = [
@@ -68,9 +71,8 @@ class GoSyntaxHighlighter(QSyntaxHighlighter):
             pattern = f'\\b{word}\\b'
             self.highlighting_rules.append((re.compile(pattern), keyword_format))
 
-        # Built-in types
         type_format = QTextCharFormat()
-        type_format.setForeground(QColor("#008080"))
+        type_format.setForeground(QColor(self.theme_colors.get('type', "#008080")))
         type_format.setFontWeight(QFont.Bold)
 
         types = [
@@ -83,9 +85,8 @@ class GoSyntaxHighlighter(QSyntaxHighlighter):
             pattern = f'\\b{word}\\b'
             self.highlighting_rules.append((re.compile(pattern), type_format))
 
-        # Built-in functions
         builtin_format = QTextCharFormat()
-        builtin_format.setForeground(QColor("#800080"))
+        builtin_format.setForeground(QColor(self.theme_colors.get('function', "#800080")))
 
         builtins = [
             'append', 'cap', 'close', 'complex', 'copy', 'delete', 'imag', 'len',
@@ -96,27 +97,28 @@ class GoSyntaxHighlighter(QSyntaxHighlighter):
             pattern = f'\\b{word}\\b'
             self.highlighting_rules.append((re.compile(pattern), builtin_format))
 
-        # Strings
         string_format = QTextCharFormat()
-        string_format.setForeground(QColor("#008000"))
+        string_format.setForeground(QColor(self.theme_colors.get('string', "#008000")))
         self.highlighting_rules.append((re.compile(r'"[^"\\]*(\\.[^"\\]*)*"'), string_format))
         self.highlighting_rules.append((re.compile(r'`[^`]*`'), string_format))
 
-        # Numbers
         number_format = QTextCharFormat()
-        number_format.setForeground(QColor("#FF6600"))
+        number_format.setForeground(QColor(self.theme_colors.get('number', "#FF6600")))
         self.highlighting_rules.append((re.compile(r'\b\d+\.?\d*\b'), number_format))
 
-        # Comments
         comment_format = QTextCharFormat()
-        comment_format.setForeground(QColor("#808080"))
+        comment_format.setForeground(QColor(self.theme_colors.get('comment', "#808080")))
         comment_format.setFontItalic(True)
         self.highlighting_rules.append((re.compile(r'//[^\n]*'), comment_format))
 
-        # Multi-line comment patterns
         self.multi_line_comment_format = comment_format
         self.comment_start = re.compile(r'/\*')
         self.comment_end = re.compile(r'\*/')
+    
+    def update_colors(self, theme_colors):
+        self.theme_colors = theme_colors
+        self.setup_formats()
+        self.rehighlight()
 
     def highlightBlock(self, text):
         """Apply syntax highlighting to a block of text"""
@@ -155,41 +157,33 @@ class CodeEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Set font
         font = QFont("Consolas", 11)
+        font.setWeight(QFont.Medium)
         if not font.exactMatch():
             font = QFont("Courier New", 11)
+            font.setWeight(QFont.Medium)
         self.setFont(font)
 
-        # Tab settings
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(' ') * 4)
 
-        # Line number area
         self.line_number_area = LineNumberArea(self)
 
-        # Breakpoints (line number -> True)
         self.breakpoints = set()
 
-        # Current execution line
         self.current_line = None
 
-        # Syntax highlighter
         self.highlighter = GoSyntaxHighlighter(self.document())
 
-        # Autocomplete widget (initialized lazily)
         self.autocomplete_widget = None
         self.analyzer = None
 
-        # File path (set by TabbedEditor)
         self.file_path = None
 
-        # Connect signals
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
 
         self.update_line_number_area_width(0)
 
-        # Set color scheme
         palette = self.palette()
         palette.setColor(QPalette.Base, QColor("#FFFFFF"))
         palette.setColor(QPalette.Text, QColor("#000000"))
@@ -225,9 +219,13 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def line_number_area_paint_event(self, event):
-        """Paint line numbers and breakpoints"""
         painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), QColor("#F0F0F0"))
+        
+        bg_color = self.palette().color(QPalette.Base)
+        if bg_color.lightness() < 128:
+            painter.fillRect(event.rect(), bg_color.lighter(110))
+        else:
+            painter.fillRect(event.rect(), QColor("#F0F0F0"))
 
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
@@ -239,19 +237,21 @@ class CodeEditor(QPlainTextEdit):
                 number = str(block_number + 1)
                 line_num = block_number + 1
 
-                # Draw breakpoint indicator
                 if line_num in self.breakpoints:
                     painter.setPen(Qt.NoPen)
                     painter.setBrush(QColor("#FF0000"))
                     painter.drawEllipse(3, top + 2, 12, 12)
 
-                # Highlight current execution line
                 if line_num == self.current_line:
                     painter.fillRect(0, top, self.line_number_area.width(),
                                    self.fontMetrics().height(), QColor("#FFFF00"))
 
-                # Draw line number
-                painter.setPen(QColor("#808080"))
+                text_color = self.palette().color(QPalette.Text)
+                if text_color.lightness() < 128:
+                    painter.setPen(QColor("#FFFFFF").darker(150))
+                else:
+                    painter.setPen(QColor("#808080"))
+                    
                 painter.drawText(0, top, self.line_number_area.width() - 5,
                                self.fontMetrics().height(),
                                Qt.AlignRight, number)

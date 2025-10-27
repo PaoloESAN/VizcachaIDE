@@ -3,14 +3,15 @@ Main window for VizcachaIDE application
 """
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QSplitter, QAction, QFileDialog, QMessageBox, QToolBar)
+                             QSplitter, QAction, QFileDialog, QMessageBox, QToolBar, QActionGroup)
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import QKeySequence, QIcon, QFont
+from PyQt5.QtGui import QKeySequence, QIcon, QFont, QColor
 
 from gui.tabbed_editor import TabbedEditor
 from gui.console import ConsoleWidget
 from gui.variables import VariablesWidget
 from gui.callstack import CallStackWidget
+from gui.themes import ThemeManager
 from core.runner import GoRunner
 from core.debugger import GoDebugger
 
@@ -19,14 +20,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings()
+        
+        self.theme_manager = ThemeManager()
 
-        # Initialize components
         self.runner = GoRunner()
         self.debugger = GoDebugger()
 
         self.init_ui()
         self.connect_signals()
         self.restore_state()
+        self.apply_theme()
 
     def init_ui(self):
         """Initialize the user interface"""
@@ -158,6 +161,13 @@ class MainWindow(QMainWindow):
         paste_action.setShortcut(QKeySequence.Paste)
         paste_action.triggered.connect(lambda: self.editor.current_editor() and self.editor.current_editor().paste())
         edit_menu.addAction(paste_action)
+        
+        edit_menu.addSeparator()
+        
+        preferences_action = QAction("&Preferences...", self)
+        preferences_action.setShortcut("Ctrl+,")
+        preferences_action.triggered.connect(self.show_settings)
+        edit_menu.addAction(preferences_action)
 
         # Run menu
         run_menu = menubar.addMenu("&Run")
@@ -179,12 +189,6 @@ class MainWindow(QMainWindow):
         self.build_action.setShortcut("Ctrl+B")
         self.build_action.triggered.connect(self.build_code)
         run_menu.addAction(self.build_action)
-
-        run_menu.addSeparator()
-
-        configure_action = QAction("&Configure...", self)
-        configure_action.triggered.connect(self.show_settings)
-        run_menu.addAction(configure_action)
 
         # Debug menu
         debug_menu = menubar.addMenu("&Debug")
@@ -218,6 +222,31 @@ class MainWindow(QMainWindow):
         self.toggle_breakpoint_action.setShortcut("F10")
         self.toggle_breakpoint_action.triggered.connect(self.toggle_breakpoint)
         debug_menu.addAction(self.toggle_breakpoint_action)
+
+        # View menu
+        view_menu = menubar.addMenu("&View")
+        
+        theme_menu = view_menu.addMenu("&Theme")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        
+        for theme_name in self.theme_manager.get_theme_names():
+            theme_action = QAction(theme_name, self)
+            theme_action.setCheckable(True)
+            theme_action.triggered.connect(lambda checked, name=theme_name: self.change_theme(name))
+            theme_group.addAction(theme_action)
+            theme_menu.addAction(theme_action)
+            
+            if theme_name == self.settings.value("appearance/theme", "Dark"):
+                theme_action.setChecked(True)
+        
+        view_menu.addSeparator()
+        
+        self.toggle_toolbar_action = QAction("Show &Toolbar", self)
+        self.toggle_toolbar_action.setCheckable(True)
+        self.toggle_toolbar_action.setChecked(True)
+        self.toggle_toolbar_action.triggered.connect(self.toggle_toolbar)
+        view_menu.addAction(self.toggle_toolbar_action)
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
@@ -534,9 +563,56 @@ class MainWindow(QMainWindow):
             # Settings were saved, optionally apply some immediately
             self.apply_current_settings()
 
+    def change_theme(self, theme_name):
+        self.settings.setValue("appearance/theme", theme_name)
+        self.apply_theme()
+    
+    def apply_theme(self):
+        theme_name = self.settings.value("appearance/theme", "Dark")
+        
+        from PyQt5.QtWidgets import QApplication
+        app = QApplication.instance()
+        stylesheet = self.theme_manager.apply_theme(app, theme_name)
+        app.setStyleSheet(stylesheet)
+        
+        theme = self.theme_manager.current_theme
+        
+        for i in range(self.editor.count()):
+            editor_widget = self.editor.widget(i)
+            if editor_widget:
+                self.apply_editor_theme(editor_widget, theme)
+        
+        if hasattr(self, 'console'):
+            self.apply_console_theme(theme)
+    
+    def apply_editor_theme(self, editor, theme):
+        from PyQt5.QtGui import QPalette
+        palette = editor.palette()
+        palette.setColor(QPalette.Base, QColor(theme.editor['background']))
+        palette.setColor(QPalette.Text, QColor(theme.editor['text']))
+        editor.setPalette(palette)
+        
+        current_font = editor.font()
+        current_font.setWeight(QFont.Medium)
+        editor.setFont(current_font)
+        
+        if hasattr(editor, 'highlighter'):
+            editor.highlighter.update_colors(theme.editor)
+    
+    def apply_console_theme(self, theme):
+        from PyQt5.QtGui import QPalette
+        palette = self.console.palette()
+        palette.setColor(QPalette.Base, QColor(theme.console['background']))
+        palette.setColor(QPalette.Text, QColor(theme.console['text']))
+        self.console.setPalette(palette)
+    
+    def toggle_toolbar(self):
+        show = self.toggle_toolbar_action.isChecked()
+        for toolbar in self.findChildren(QToolBar):
+            toolbar.setVisible(show)
+        self.settings.setValue("appearance/show_toolbar", show)
+
     def apply_current_settings(self):
-        """Apply current settings to the IDE"""
-        # Apply font settings to all open editors
         font_family = self.settings.value("editor/font_family", "Consolas")
         font_size = int(self.settings.value("editor/font_size", 11))
 
@@ -544,9 +620,9 @@ class MainWindow(QMainWindow):
             editor_widget = self.editor.widget(i)
             if editor_widget:
                 font = QFont(font_family, font_size)
+                font.setWeight(QFont.Medium)
                 editor_widget.setFont(font)
 
-        # Apply word wrap
         word_wrap = self.settings.value("editor/word_wrap", False, type=bool)
         for i in range(self.editor.count()):
             editor_widget = self.editor.widget(i)
@@ -557,11 +633,12 @@ class MainWindow(QMainWindow):
                 else:
                     editor_widget.setLineWrapMode(QPlainTextEdit.NoWrap)
 
-        # Show/hide toolbar
         show_toolbar = self.settings.value("appearance/show_toolbar", True, type=bool)
-        if hasattr(self, 'toolbar'):
-            for toolbar in self.findChildren(QToolBar):
-                toolbar.setVisible(show_toolbar)
+        self.toggle_toolbar_action.setChecked(show_toolbar)
+        for toolbar in self.findChildren(QToolBar):
+            toolbar.setVisible(show_toolbar)
+        
+        self.apply_theme()
 
     def open_terminal(self):
         """Open integrated terminal in current file directory with Go environment"""
