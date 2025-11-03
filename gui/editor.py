@@ -260,6 +260,62 @@ class CodeEditor(QPlainTextEdit):
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
+    
+    def paintEvent(self, event):
+        """Override paint event to draw indentation guides"""
+        super().paintEvent(event)
+        
+        # Draw indentation guides
+        painter = QPainter(self.viewport())
+        
+        # Get color for guides based on theme
+        bg_color = self.palette().color(QPalette.Base)
+        if bg_color.lightness() < 128:
+            # Dark theme
+            guide_color = QColor("#3e3e42")
+        else:
+            # Light theme
+            guide_color = QColor("#d3d3d3")
+        
+        painter.setPen(guide_color)
+        
+        # Get visible blocks
+        block = self.firstVisibleBlock()
+        
+        # Tab width in pixels (4 spaces)
+        tab_width = self.fontMetrics().horizontalAdvance(' ') * 4
+        
+        # Draw guides for all visible lines
+        while block.isValid():
+            block_geom = self.blockBoundingGeometry(block).translated(self.contentOffset())
+            top = int(block_geom.top())
+            bottom = int(block_geom.bottom())
+            
+            # Stop if we're past the visible area
+            if top > event.rect().bottom():
+                break
+            
+            if block.isVisible() and bottom >= event.rect().top():
+                text = block.text()
+                
+                # Calculate indentation level for this line
+                indent_level = 0
+                for char in text:
+                    if char == ' ':
+                        indent_level += 1
+                    elif char == '\t':
+                        indent_level += 4
+                    else:
+                        break
+                
+                # Draw vertical lines for each indentation level in this line
+                num_guides = indent_level // 4
+                for i in range(1, num_guides + 1):
+                    # Position at the START of each tab stop (before the spaces)
+                    x = int(tab_width * (i - 1)) + 1
+                    painter.drawLine(x, top, x, bottom)
+            
+            block = block.next()
 
     def toggle_breakpoint(self):
         """Toggle breakpoint at current cursor position"""
@@ -312,91 +368,322 @@ class CodeEditor(QPlainTextEdit):
         self.line_number_area.update()
     
     def move_line_up(self):
-        """Move current line or selection up"""
+        """Move current line or selected lines up"""
         cursor = self.textCursor()
+        document = self.document()
         
-        # Single line handling
-        block_num = cursor.blockNumber()
-        
-        # Can't move up if on first line
-        if block_num == 0:
-            return
-        
-        # Remember cursor position within line
-        cursor_pos_in_line = cursor.positionInBlock()
-        
-        # Get current and previous line text
-        current_block = cursor.block()
-        current_text = current_block.text()
-        prev_block = current_block.previous()
-        prev_text = prev_block.text()
-        
-        # Store the start position of previous block
-        prev_start = prev_block.position()
-        
-        # Begin edit block for undo
-        cursor.beginEditBlock()
-        
-        # Select both lines (previous and current)
-        cursor.setPosition(prev_start)
-        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-        cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)  # newline
-        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)  # current line
-        
-        # Replace with swapped lines
-        cursor.insertText(current_text + '\n' + prev_text)
-        
-        cursor.endEditBlock()
-        
-        # Now set cursor position on the moved line
-        # The moved line is now at prev_start position
-        new_cursor = self.textCursor()
-        new_cursor.setPosition(prev_start + min(cursor_pos_in_line, len(current_text)))
-        self.setTextCursor(new_cursor)
+        # Get the block numbers for the selection
+        if cursor.hasSelection():
+            # Multi-line selection
+            start_pos = min(cursor.position(), cursor.anchor())
+            end_pos = max(cursor.position(), cursor.anchor())
+            
+            start_block = document.findBlock(start_pos)
+            end_block = document.findBlock(end_pos)
+            
+            start_block_num = start_block.blockNumber()
+            end_block_num = end_block.blockNumber()
+            
+            # Can't move up if starting block is first line
+            if start_block_num == 0:
+                return
+            
+            # Get the block before the selection
+            prev_block = start_block.previous()
+            
+            # Collect all lines to move
+            lines_to_move = []
+            current_block = start_block
+            for i in range(end_block_num - start_block_num + 1):
+                lines_to_move.append(current_block.text())
+                current_block = current_block.next()
+            
+            # Get the line before
+            prev_line = prev_block.text()
+            
+            # Build replacement text: moved lines first, then previous line
+            replacement = '\n'.join(lines_to_move) + '\n' + prev_line
+            
+            # Calculate positions
+            prev_start = prev_block.position()
+            end_pos_in_block = end_block.position() + end_block.length()
+            
+            # Replace the text
+            cursor.beginEditBlock()
+            cursor.setPosition(prev_start)
+            cursor.setPosition(end_pos_in_block - 1, QTextCursor.KeepAnchor)  # Exclude final newline
+            cursor.insertText(replacement)
+            cursor.endEditBlock()
+            
+            # Restore selection on the moved lines
+            new_cursor = self.textCursor()
+            new_start = prev_start
+            new_end = new_start + len('\n'.join(lines_to_move))
+            new_cursor.setPosition(new_start)
+            new_cursor.setPosition(new_end, QTextCursor.KeepAnchor)
+            self.setTextCursor(new_cursor)
+        else:
+            # Single line handling
+            block_num = cursor.blockNumber()
+            
+            # Can't move up if on first line
+            if block_num == 0:
+                return
+            
+            # Remember cursor position within line
+            cursor_pos_in_line = cursor.positionInBlock()
+            
+            # Get current and previous line text
+            current_block = cursor.block()
+            current_text = current_block.text()
+            prev_block = current_block.previous()
+            prev_text = prev_block.text()
+            
+            # Store the start position of previous block
+            prev_start = prev_block.position()
+            
+            # Begin edit block for undo
+            cursor.beginEditBlock()
+            
+            # Select both lines (previous and current)
+            cursor.setPosition(prev_start)
+            cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+            cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)  # newline
+            cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)  # current line
+            
+            # Replace with swapped lines
+            cursor.insertText(current_text + '\n' + prev_text)
+            
+            cursor.endEditBlock()
+            
+            # Now set cursor position on the moved line
+            # The moved line is now at prev_start position
+            new_cursor = self.textCursor()
+            new_cursor.setPosition(prev_start + min(cursor_pos_in_line, len(current_text)))
+            self.setTextCursor(new_cursor)
     
     def move_line_down(self):
-        """Move current line or selection down"""
+        """Move current line or selected lines down"""
+        cursor = self.textCursor()
+        document = self.document()
+        
+        # Get the block numbers for the selection
+        if cursor.hasSelection():
+            # Multi-line selection
+            start_pos = min(cursor.position(), cursor.anchor())
+            end_pos = max(cursor.position(), cursor.anchor())
+            
+            start_block = document.findBlock(start_pos)
+            end_block = document.findBlock(end_pos)
+            
+            start_block_num = start_block.blockNumber()
+            end_block_num = end_block.blockNumber()
+            total_blocks = document.blockCount()
+            
+            # Can't move down if ending block is last line
+            if end_block_num >= total_blocks - 1:
+                return
+            
+            # Get the block after the selection
+            next_block = end_block.next()
+            
+            # Collect all lines to move
+            lines_to_move = []
+            current_block = start_block
+            for i in range(end_block_num - start_block_num + 1):
+                lines_to_move.append(current_block.text())
+                current_block = current_block.next()
+            
+            # Get the line after
+            next_line = next_block.text()
+            
+            # Build replacement text: next line first, then moved lines
+            replacement = next_line + '\n' + '\n'.join(lines_to_move)
+            
+            # Calculate positions
+            start_pos_in_block = start_block.position()
+            next_end = next_block.position() + next_block.length()
+            
+            # Replace the text
+            cursor.beginEditBlock()
+            cursor.setPosition(start_pos_in_block)
+            cursor.setPosition(next_end - 1, QTextCursor.KeepAnchor)  # Exclude final newline
+            cursor.insertText(replacement)
+            cursor.endEditBlock()
+            
+            # Restore selection on the moved lines (now one position down)
+            new_cursor = self.textCursor()
+            new_start = start_pos_in_block + len(next_line) + 1
+            new_end = new_start + len('\n'.join(lines_to_move))
+            new_cursor.setPosition(new_start)
+            new_cursor.setPosition(new_end, QTextCursor.KeepAnchor)
+            self.setTextCursor(new_cursor)
+        else:
+            # Single line handling
+            block_num = cursor.blockNumber()
+            total_blocks = document.blockCount()
+            
+            # Can't move down if on last line
+            if block_num >= total_blocks - 1:
+                return
+            
+            # Remember cursor position within line
+            cursor_pos_in_line = cursor.positionInBlock()
+            
+            # Get current and next line text
+            current_block = cursor.block()
+            current_text = current_block.text()
+            next_block = current_block.next()
+            next_text = next_block.text()
+            
+            # Store the start position of current block
+            current_start = current_block.position()
+            
+            # Begin edit block for undo
+            cursor.beginEditBlock()
+            
+            # Select both lines (current and next)
+            cursor.setPosition(current_start)
+            cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+            cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)  # newline
+            cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)  # next line
+            
+            # Replace with swapped lines
+            cursor.insertText(next_text + '\n' + current_text)
+            
+            cursor.endEditBlock()
+            
+            # Now set cursor position on the moved line
+            # The moved line is now at current_start + len(next_text) + 1
+            new_cursor = self.textCursor()
+            new_cursor.setPosition(current_start + len(next_text) + 1 + min(cursor_pos_in_line, len(current_text)))
+            self.setTextCursor(new_cursor)
+
+    def select_line_up(self):
+        """Select lines upward from cursor"""
         cursor = self.textCursor()
         
-        # Single line handling
-        block_num = cursor.blockNumber()
-        total_blocks = self.document().blockCount()
+        # If there's no selection, start from current line
+        if not cursor.hasSelection():
+            cursor.movePosition(QTextCursor.StartOfBlock)
         
-        # Can't move down if on last line
-        if block_num >= total_blocks - 1:
-            return
+        # Move to start of previous block and extend selection
+        cursor.movePosition(QTextCursor.Up, QTextCursor.KeepAnchor)
+        cursor.movePosition(QTextCursor.StartOfBlock, QTextCursor.KeepAnchor)
         
-        # Remember cursor position within line
-        cursor_pos_in_line = cursor.positionInBlock()
+        self.setTextCursor(cursor)
+    
+    def select_line_down(self):
+        """Select lines downward from cursor"""
+        cursor = self.textCursor()
         
-        # Get current and next line text
-        current_block = cursor.block()
-        current_text = current_block.text()
-        next_block = current_block.next()
-        next_text = next_block.text()
+        # If there's no selection, start from current line
+        if not cursor.hasSelection():
+            cursor.movePosition(QTextCursor.StartOfBlock)
         
-        # Store the start position of current block
-        current_start = current_block.position()
-        
-        # Begin edit block for undo
-        cursor.beginEditBlock()
-        
-        # Select both lines (current and next)
-        cursor.setPosition(current_start)
+        # Move to end of next block and extend selection
+        cursor.movePosition(QTextCursor.Down, QTextCursor.KeepAnchor)
         cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-        cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)  # newline
-        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)  # next line
         
-        # Replace with swapped lines
-        cursor.insertText(next_text + '\n' + current_text)
+        self.setTextCursor(cursor)
+
+    def duplicate_line_up(self):
+        """Duplicate current line or selection upward"""
+        cursor = self.textCursor()
+        document = self.document()
         
-        cursor.endEditBlock()
+        if cursor.hasSelection():
+            # Multi-line selection
+            start_pos = min(cursor.position(), cursor.anchor())
+            end_pos = max(cursor.position(), cursor.anchor())
+            
+            start_block = document.findBlock(start_pos)
+            end_block = document.findBlock(end_pos)
+            
+            start_block_num = start_block.blockNumber()
+            end_block_num = end_block.blockNumber()
+            
+            # Collect all lines to duplicate
+            lines_to_dup = []
+            current_block = start_block
+            for i in range(end_block_num - start_block_num + 1):
+                lines_to_dup.append(current_block.text())
+                current_block = current_block.next()
+            
+            # Insert duplicate lines before
+            dup_text = '\n'.join(lines_to_dup) + '\n'
+            cursor.setPosition(start_block.position())
+            cursor.insertText(dup_text)
+            
+            # Restore selection on the original lines (now shifted down)
+            new_cursor = self.textCursor()
+            new_start = start_block.position() + len(dup_text)
+            new_end = new_start + (end_pos - start_pos)
+            new_cursor.setPosition(new_start)
+            new_cursor.setPosition(new_end, QTextCursor.KeepAnchor)
+            self.setTextCursor(new_cursor)
+        else:
+            # Single line
+            block = cursor.block()
+            block_text = block.text()
+            
+            # Insert duplicate line before current
+            cursor.setPosition(block.position())
+            cursor.insertText(block_text + '\n')
+            
+            # Keep cursor on original line
+            new_cursor = self.textCursor()
+            new_cursor.setPosition(block.position() + len(block_text) + 1 + cursor.positionInBlock())
+            self.setTextCursor(new_cursor)
+    
+    def duplicate_line_down(self):
+        """Duplicate current line or selection downward"""
+        cursor = self.textCursor()
+        document = self.document()
         
-        # Now set cursor position on the moved line
-        # The moved line is now at current_start + len(next_text) + 1
-        new_cursor = self.textCursor()
-        new_cursor.setPosition(current_start + len(next_text) + 1 + min(cursor_pos_in_line, len(current_text)))
-        self.setTextCursor(new_cursor)
+        if cursor.hasSelection():
+            # Multi-line selection
+            start_pos = min(cursor.position(), cursor.anchor())
+            end_pos = max(cursor.position(), cursor.anchor())
+            
+            start_block = document.findBlock(start_pos)
+            end_block = document.findBlock(end_pos)
+            
+            start_block_num = start_block.blockNumber()
+            end_block_num = end_block.blockNumber()
+            
+            # Collect all lines to duplicate
+            lines_to_dup = []
+            current_block = start_block
+            for i in range(end_block_num - start_block_num + 1):
+                lines_to_dup.append(current_block.text())
+                current_block = current_block.next()
+            
+            # Insert duplicate lines after
+            dup_text = '\n' + '\n'.join(lines_to_dup)
+            cursor.setPosition(end_block.position() + end_block.length() - 1)  # Before final newline
+            cursor.insertText(dup_text)
+            
+            # Restore selection on the duplicated lines (now below)
+            new_cursor = self.textCursor()
+            new_start = end_block.position() + end_block.length()
+            new_end = new_start + (end_pos - start_pos)
+            new_cursor.setPosition(new_start)
+            new_cursor.setPosition(new_end, QTextCursor.KeepAnchor)
+            self.setTextCursor(new_cursor)
+        else:
+            # Single line
+            block = cursor.block()
+            block_text = block.text()
+            
+            # Insert duplicate line after current
+            cursor.setPosition(block.position() + block.length() - 1)  # Before final newline
+            cursor.insertText('\n' + block_text)
+            
+            # Keep cursor on original line
+            new_cursor = self.textCursor()
+            new_cursor.setPosition(block.position() + cursor.positionInBlock())
+            self.setTextCursor(new_cursor)
 
     def show_autocomplete(self):
         """Show autocomplete suggestions"""
@@ -537,6 +824,24 @@ class CodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         """Handle key press events for auto-indentation and autocomplete"""
+        # Handle Tab for indentation
+        if event.key() == Qt.Key_Tab:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                # Indent multiple lines
+                self.indent_selection()
+            else:
+                # Smart tab: insert spaces to reach next tab stop
+                position_in_block = cursor.positionInBlock()
+                spaces_to_insert = 4 - (position_in_block % 4)
+                cursor.insertText(' ' * spaces_to_insert)
+            return
+        
+        # Handle Shift+Tab for unindent
+        if event.key() == Qt.Key_Backtab:
+            self.unindent_selection()
+            return
+        
         # Handle Alt+Up/Down for moving lines
         if event.modifiers() == Qt.AltModifier:
             if event.key() == Qt.Key_Up:
@@ -544,6 +849,24 @@ class CodeEditor(QPlainTextEdit):
                 return
             elif event.key() == Qt.Key_Down:
                 self.move_line_down()
+                return
+        
+        # Handle Shift+Alt+Up/Down for duplicating lines
+        if event.modifiers() == (Qt.ShiftModifier | Qt.AltModifier):
+            if event.key() == Qt.Key_Up:
+                self.duplicate_line_up()
+                return
+            elif event.key() == Qt.Key_Down:
+                self.duplicate_line_down()
+                return
+        
+        # Handle Ctrl+Shift+Up/Down for selecting lines
+        if event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+            if event.key() == Qt.Key_Up:
+                self.select_line_up()
+                return
+            elif event.key() == Qt.Key_Down:
+                self.select_line_down()
                 return
         
         # Check for Ctrl+S or other important shortcuts - let them pass through
@@ -626,12 +949,13 @@ class CodeEditor(QPlainTextEdit):
                 super().keyPressEvent(event)
                 return
 
-        # Delete pair on backspace if between matching brackets
+        # Smart backspace: delete up to 4 spaces if at indentation
         if event.key() == Qt.Key_Backspace:
             cursor = self.textCursor()
             position = cursor.position()
             code = self.toPlainText()
             
+            # Check if between matching pair first
             if position > 0 and position < len(code):
                 prev_char = code[position - 1]
                 next_char = code[position]
@@ -644,44 +968,78 @@ class CodeEditor(QPlainTextEdit):
                     cursor.movePosition(cursor.Right, cursor.KeepAnchor, 2)
                     cursor.removeSelectedText()
                     return
+            
+            # Smart backspace for indentation
+            block = cursor.block()
+            position_in_block = cursor.positionInBlock()
+            text_before = block.text()[:position_in_block]
+            
+            # If we're at the beginning of whitespace, delete up to 4 spaces
+            if text_before and text_before.strip() == '' and position_in_block > 0:
+                # Count spaces before cursor
+                spaces_before = 0
+                for i in range(position_in_block - 1, -1, -1):
+                    if block.text()[i] == ' ':
+                        spaces_before += 1
+                    else:
+                        break
+                
+                if spaces_before > 0:
+                    # Delete up to 4 spaces or until previous tab stop
+                    spaces_to_delete = min(4, ((position_in_block - 1) % 4) + 1)
+                    if spaces_to_delete == 0:
+                        spaces_to_delete = 4
+                    spaces_to_delete = min(spaces_to_delete, position_in_block)
+                    
+                    cursor.movePosition(cursor.Left, cursor.KeepAnchor, spaces_to_delete)
+                    cursor.removeSelectedText()
+                    return
+            
+            # Normal backspace
+            super().keyPressEvent(event)
+            return
 
         # Auto-indent on new line
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             cursor = self.textCursor()
             block_text = cursor.block().text()
             
-            # Calculate current indentation
-            indent = len(block_text) - len(block_text.lstrip())
+            # Calculate current indentation in spaces
+            indent = 0
+            for char in block_text:
+                if char == ' ':
+                    indent += 1
+                elif char == '\t':
+                    indent += 4
+                else:
+                    break
             
             # Check the actual cursor position in the line
             cursor_pos_in_block = cursor.positionInBlock()
             text_before_cursor = block_text[:cursor_pos_in_block]
             text_after_cursor = block_text[cursor_pos_in_block:]
             
-            # Check if we're in import context
-            code = self.toPlainText()
-            position = cursor.position()
-            
-            # Check if the current line or previous lines have import (
-            lines_before = code[:position].split('\n')
-            in_import_block = False
-            for line in reversed(lines_before[-10:]):  # Check last 10 lines
-                if 'import' in line and '(' in line:
-                    in_import_block = True
-                    break
-                if ')' in line:  # Found closing paren first
-                    break
-            
             # Check if cursor is between braces {}
             between_braces = text_before_cursor.rstrip().endswith('{') and text_after_cursor.lstrip().startswith('}')
             
-            # Check if line ends with opening brace
-            stripped_text = block_text.rstrip()
+            # Check if line ends with opening brace or other indent triggers
+            stripped_before = text_before_cursor.rstrip()
             needs_extra_indent = False
             
-            # Only check for keywords if we're at the end of the line and it ends with {
-            if stripped_text.endswith('{') and not between_braces:
+            # Check for structures that need extra indent
+            if stripped_before.endswith('{'):
                 needs_extra_indent = True
+            elif stripped_before.endswith('('):
+                needs_extra_indent = True
+            elif stripped_before.endswith('['):
+                needs_extra_indent = True
+            
+            # Check for Go keywords that typically increase indent
+            go_keywords = ['func', 'if', 'else', 'for', 'switch', 'case', 'select', 'type', 'struct', 'interface']
+            for keyword in go_keywords:
+                if stripped_before.endswith('{') and any(kw in stripped_before for kw in go_keywords):
+                    needs_extra_indent = True
+                    break
             
             # Insert new line
             super().keyPressEvent(event)
@@ -691,15 +1049,13 @@ class CodeEditor(QPlainTextEdit):
                 self.textCursor().insertText(' ' * indent)
             
             # Add extra indentation if needed
-            if in_import_block:
-                # Inside import parentheses, add tab
-                self.textCursor().insertText('\t')
-            elif needs_extra_indent:
+            if needs_extra_indent and not between_braces:
                 self.textCursor().insertText('    ')  # 4 spaces
             elif between_braces:
                 # Special case: cursor between braces
                 # Add indented line and closing brace line
-                self.textCursor().insertText('    ')  # 4 spaces for content
+                cursor = self.textCursor()
+                cursor.insertText('    ')  # 4 spaces for content
                 cursor_after_indent = self.textCursor()
                 cursor_after_indent.insertText('\n' + ' ' * indent)
                 self.setTextCursor(cursor_after_indent)
@@ -707,6 +1063,8 @@ class CodeEditor(QPlainTextEdit):
                 cursor_after_indent.movePosition(QTextCursor.Up)
                 cursor_after_indent.movePosition(QTextCursor.EndOfLine)
                 self.setTextCursor(cursor_after_indent)
+            
+            return
         else:
             super().keyPressEvent(event)
             
@@ -767,6 +1125,89 @@ class CodeEditor(QPlainTextEdit):
                     self.autocomplete_widget.hide()
             else:
                 self.autocomplete_widget.hide()
+    
+    def indent_selection(self):
+        """Indent selected lines by 4 spaces"""
+        cursor = self.textCursor()
+        
+        # Get selection boundaries
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        # Get the blocks
+        cursor.setPosition(start)
+        start_block = cursor.blockNumber()
+        
+        cursor.setPosition(end)
+        end_block = cursor.blockNumber()
+        
+        # Start editing
+        cursor.beginEditBlock()
+        
+        # Indent each line in selection
+        for block_num in range(start_block, end_block + 1):
+            cursor.setPosition(self.document().findBlockByNumber(block_num).position())
+            cursor.insertText('    ')
+        
+        cursor.endEditBlock()
+    
+    def unindent_selection(self):
+        """Unindent selected lines by up to 4 spaces"""
+        cursor = self.textCursor()
+        
+        if cursor.hasSelection():
+            # Get selection boundaries
+            start = cursor.selectionStart()
+            end = cursor.selectionEnd()
+            
+            # Get the blocks
+            cursor.setPosition(start)
+            start_block = cursor.blockNumber()
+            
+            cursor.setPosition(end)
+            end_block = cursor.blockNumber()
+            
+            # Start editing
+            cursor.beginEditBlock()
+            
+            # Unindent each line in selection
+            for block_num in range(start_block, end_block + 1):
+                block = self.document().findBlockByNumber(block_num)
+                text = block.text()
+                
+                # Count spaces to remove (up to 4)
+                spaces_to_remove = 0
+                for char in text[:4]:
+                    if char == ' ':
+                        spaces_to_remove += 1
+                    else:
+                        break
+                
+                if spaces_to_remove > 0:
+                    cursor.setPosition(block.position())
+                    cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, spaces_to_remove)
+                    cursor.removeSelectedText()
+            
+            cursor.endEditBlock()
+        else:
+            # No selection, unindent current line
+            block = cursor.block()
+            text = block.text()
+            
+            # Count spaces to remove (up to 4)
+            spaces_to_remove = 0
+            for char in text[:4]:
+                if char == ' ':
+                    spaces_to_remove += 1
+                else:
+                    break
+            
+            if spaces_to_remove > 0:
+                cursor.beginEditBlock()
+                cursor.setPosition(block.position())
+                cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, spaces_to_remove)
+                cursor.removeSelectedText()
+                cursor.endEditBlock()
     
     def _is_in_import_context(self, code, cursor_position):
         """Check if cursor is within an import statement
