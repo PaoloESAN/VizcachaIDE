@@ -22,15 +22,14 @@ class ConsoleWidget(QTextEdit):
 
         # Set font
         font = QFont("Consolas", 10)
+        font.setWeight(QFont.Medium)
         if not font.exactMatch():
             font = QFont("Courier New", 10)
+            font.setWeight(QFont.Medium)
         self.setFont(font)
 
-        # Set color scheme
-        palette = self.palette()
-        palette.setColor(QPalette.Base, QColor("#1E1E1E"))
-        palette.setColor(QPalette.Text, QColor("#D4D4D4"))
-        self.setPalette(palette)
+        # Enable background filling to inherit theme colors
+        self.setAutoFillBackground(True)
 
         # Welcome message
         self.append_output("VizcachaIDE Console - Ready\n")

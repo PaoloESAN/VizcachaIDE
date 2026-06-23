@@ -5,8 +5,16 @@ Go debugger integration using Delve
 import subprocess
 import json
 import os
+import platform
 from PyQt5.QtCore import QObject, pyqtSignal, QProcess, QTimer
 import re
+
+
+def get_subprocess_flags():
+    """Get subprocess creation flags to hide console on Windows"""
+    if platform.system() == "Windows":
+        return subprocess.CREATE_NO_WINDOW
+    return 0
 
 
 class GoDebugger(QObject):
@@ -39,7 +47,8 @@ class GoDebugger(QObject):
 
         # Check if delve is installed
         try:
-            result = subprocess.run(['dlv', 'version'], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(['dlv', 'version'], capture_output=True, text=True, timeout=5,
+                                   creationflags=get_subprocess_flags())
             if result.returncode != 0:
                 self.error_received.emit("Delve debugger not found. Please install it with: go install github.com/go-delve/delve/cmd/dlv@latest\n")
                 self.debug_finished.emit()

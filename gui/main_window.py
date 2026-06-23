@@ -3,14 +3,15 @@ Main window for VizcachaIDE application
 """
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QSplitter, QAction, QFileDialog, QMessageBox, QToolBar)
+                             QSplitter, QAction, QFileDialog, QMessageBox, QToolBar, QActionGroup)
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import QKeySequence, QIcon, QFont
+from PyQt5.QtGui import QKeySequence, QIcon, QFont, QColor
 
 from gui.tabbed_editor import TabbedEditor
 from gui.console import ConsoleWidget
 from gui.variables import VariablesWidget
 from gui.callstack import CallStackWidget
+from gui.themes import ThemeManager
 from core.runner import GoRunner
 from core.debugger import GoDebugger
 
@@ -19,14 +20,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings()
+        
+        self.theme_manager = ThemeManager()
 
-        # Initialize components
         self.runner = GoRunner()
         self.debugger = GoDebugger()
 
         self.init_ui()
         self.connect_signals()
         self.restore_state()
+        self.apply_theme()
 
     def init_ui(self):
         """Initialize the user interface"""
@@ -45,7 +48,11 @@ class MainWindow(QMainWindow):
             # Running in development
             base_path = os.path.dirname(os.path.dirname(__file__))
 
-        icon_path = os.path.join(base_path, "logo.png")
+        # Try both .ico and .png extensions
+        icon_path = os.path.join(base_path, "logo.ico")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(base_path, "logo.png")
+        
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -158,6 +165,13 @@ class MainWindow(QMainWindow):
         paste_action.setShortcut(QKeySequence.Paste)
         paste_action.triggered.connect(lambda: self.editor.current_editor() and self.editor.current_editor().paste())
         edit_menu.addAction(paste_action)
+        
+        edit_menu.addSeparator()
+        
+        preferences_action = QAction("&Preferences...", self)
+        preferences_action.setShortcut("Ctrl+,")
+        preferences_action.triggered.connect(self.show_settings)
+        edit_menu.addAction(preferences_action)
 
         # Run menu
         run_menu = menubar.addMenu("&Run")
@@ -179,12 +193,6 @@ class MainWindow(QMainWindow):
         self.build_action.setShortcut("Ctrl+B")
         self.build_action.triggered.connect(self.build_code)
         run_menu.addAction(self.build_action)
-
-        run_menu.addSeparator()
-
-        configure_action = QAction("&Configure...", self)
-        configure_action.triggered.connect(self.show_settings)
-        run_menu.addAction(configure_action)
 
         # Debug menu
         debug_menu = menubar.addMenu("&Debug")
@@ -219,6 +227,39 @@ class MainWindow(QMainWindow):
         self.toggle_breakpoint_action.triggered.connect(self.toggle_breakpoint)
         debug_menu.addAction(self.toggle_breakpoint_action)
 
+        # View menu
+        view_menu = menubar.addMenu("&View")
+        
+        theme_menu = view_menu.addMenu("&Theme")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        
+        for theme_name in self.theme_manager.get_theme_names():
+            theme_action = QAction(theme_name, self)
+            theme_action.setCheckable(True)
+            theme_action.triggered.connect(lambda checked, name=theme_name: self.change_theme(name))
+            theme_group.addAction(theme_action)
+            theme_menu.addAction(theme_action)
+            
+            if theme_name == self.settings.value("appearance/theme", "Dark"):
+                theme_action.setChecked(True)
+        
+        view_menu.addSeparator()
+        
+        self.toggle_toolbar_action = QAction("Show &Toolbar", self)
+        self.toggle_toolbar_action.setCheckable(True)
+        self.toggle_toolbar_action.setChecked(True)
+        self.toggle_toolbar_action.triggered.connect(self.toggle_toolbar)
+        view_menu.addAction(self.toggle_toolbar_action)
+
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        terminal_action = QAction("Open &Terminal", self)
+        terminal_action.setShortcut("Ctrl+`")
+        terminal_action.triggered.connect(self.open_terminal)
+        tools_menu.addAction(terminal_action)
+
         # Help menu
         help_menu = menubar.addMenu("&Help")
 
@@ -247,6 +288,14 @@ class MainWindow(QMainWindow):
         self.build_btn_action = QAction("🔨 Build", self)
         self.build_btn_action.triggered.connect(self.build_code)
         toolbar.addAction(self.build_btn_action)
+
+        toolbar.addSeparator()
+
+        # Terminal button
+        self.terminal_btn_action = QAction("⚡ Terminal", self)
+        self.terminal_btn_action.triggered.connect(self.open_terminal)
+        self.terminal_btn_action.setToolTip("Open terminal in current file directory")
+        toolbar.addAction(self.terminal_btn_action)
 
         toolbar.addSeparator()
 
@@ -291,6 +340,13 @@ class MainWindow(QMainWindow):
 
         # Connect tabbed editor signals
         self.editor.active_file_changed.connect(self.on_active_file_changed)
+        self.editor.tab_created.connect(self.on_tab_created)
+
+    def on_tab_created(self, editor):
+        """Apply theme to newly created tab"""
+        if hasattr(self, 'theme_manager'):
+            theme = self.theme_manager.current_theme
+            self.apply_editor_theme(editor, theme)
 
     def on_active_file_changed(self, file_path):
         """Handle active file change in tabbed editor"""
@@ -334,8 +390,19 @@ class MainWindow(QMainWindow):
     def run_code(self):
         """Run the current Go code"""
         current_file = self.editor.current_file_path()
+        
+        # If no file path, open save dialog directly
         if not current_file:
-            QMessageBox.warning(self, "No File", "Please save your file before running.")
+            if not self.save_file_as():
+                # User cancelled save dialog
+                return
+            current_file = self.editor.current_file_path()
+            if not current_file:
+                return
+
+        # Save the file before running
+        if not self.save_file():
+            # If save failed or was cancelled, don't run
             return
 
         self.console.clear()
@@ -352,8 +419,19 @@ class MainWindow(QMainWindow):
     def build_code(self):
         """Build the current Go code"""
         current_file = self.editor.current_file_path()
+        
+        # If no file path, open save dialog directly
         if not current_file:
-            QMessageBox.warning(self, "No File", "Please save your file before building.")
+            if not self.save_file_as():
+                # User cancelled save dialog
+                return
+            current_file = self.editor.current_file_path()
+            if not current_file:
+                return
+
+        # Save the file before building
+        if not self.save_file():
+            # If save failed or was cancelled, don't build
             return
 
         self.console.clear()
@@ -362,6 +440,13 @@ class MainWindow(QMainWindow):
 
         import os
         import subprocess
+        import platform
+
+        # Get subprocess flags to hide console on Windows
+        def get_subprocess_flags():
+            if platform.system() == "Windows":
+                return subprocess.CREATE_NO_WINDOW
+            return 0
 
         # Get Go executable path
         go_path = self.settings.value("env/go_path", "go")
@@ -372,13 +457,18 @@ class MainWindow(QMainWindow):
         base_name = os.path.splitext(os.path.basename(current_file))[0]
         output_name = base_name + ".exe" if os.name == 'nt' else base_name
 
+        # Get environment variables
+        env = self._get_go_environment()
+
         try:
             # Build the Go file
             result = subprocess.run(
                 [go_path, "build", "-o", output_name, os.path.basename(current_file)],
                 cwd=os.path.dirname(current_file),
                 capture_output=True,
-                text=True
+                text=True,
+                env=env,
+                creationflags=get_subprocess_flags()
             )
 
             if result.returncode == 0:
@@ -389,6 +479,26 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self.console.append_error(f"\nError: {str(e)}\n")
+    
+    def _get_go_environment(self):
+        """Get environment variables for Go execution
+        
+        Returns:
+            dict: Environment variables with Go paths
+        """
+        import os
+        
+        # Check if using local Go installation
+        is_local = self.settings.value("env/go_local", False, type=bool)
+        
+        if is_local:
+            # Use local Go installation environment
+            from core.go_installer import GoInstaller
+            installer = GoInstaller()
+            return installer.get_go_env()
+        else:
+            # Return system environment
+            return os.environ.copy()
 
     def stop_execution(self):
         """Stop the current execution"""
@@ -419,6 +529,11 @@ class MainWindow(QMainWindow):
         current_file = self.editor.current_file_path()
         if not current_file:
             QMessageBox.warning(self, "No File", "Please save your file before debugging.")
+            return
+
+        # Save the file before debugging
+        if not self.save_file():
+            # If save failed or was cancelled, don't debug
             return
 
         self.console.clear()
@@ -479,9 +594,56 @@ class MainWindow(QMainWindow):
             # Settings were saved, optionally apply some immediately
             self.apply_current_settings()
 
+    def change_theme(self, theme_name):
+        self.settings.setValue("appearance/theme", theme_name)
+        self.apply_theme()
+    
+    def apply_theme(self):
+        theme_name = self.settings.value("appearance/theme", "Dark")
+        
+        from PyQt5.QtWidgets import QApplication
+        app = QApplication.instance()
+        stylesheet = self.theme_manager.apply_theme(app, theme_name)
+        app.setStyleSheet(stylesheet)
+        
+        theme = self.theme_manager.current_theme
+        
+        for i in range(self.editor.count()):
+            editor_widget = self.editor.widget(i)
+            if editor_widget:
+                self.apply_editor_theme(editor_widget, theme)
+        
+        if hasattr(self, 'console'):
+            self.apply_console_theme(theme)
+    
+    def apply_editor_theme(self, editor, theme):
+        from PyQt5.QtGui import QPalette
+        palette = editor.palette()
+        palette.setColor(QPalette.Base, QColor(theme.editor['background']))
+        palette.setColor(QPalette.Text, QColor(theme.editor['text']))
+        editor.setPalette(palette)
+        
+        current_font = editor.font()
+        current_font.setWeight(QFont.Medium)
+        editor.setFont(current_font)
+        
+        if hasattr(editor, 'highlighter'):
+            editor.highlighter.update_colors(theme.editor)
+    
+    def apply_console_theme(self, theme):
+        from PyQt5.QtGui import QPalette
+        palette = self.console.palette()
+        palette.setColor(QPalette.Base, QColor(theme.console['background']))
+        palette.setColor(QPalette.Text, QColor(theme.console['text']))
+        self.console.setPalette(palette)
+    
+    def toggle_toolbar(self):
+        show = self.toggle_toolbar_action.isChecked()
+        for toolbar in self.findChildren(QToolBar):
+            toolbar.setVisible(show)
+        self.settings.setValue("appearance/show_toolbar", show)
+
     def apply_current_settings(self):
-        """Apply current settings to the IDE"""
-        # Apply font settings to all open editors
         font_family = self.settings.value("editor/font_family", "Consolas")
         font_size = int(self.settings.value("editor/font_size", 11))
 
@@ -489,9 +651,9 @@ class MainWindow(QMainWindow):
             editor_widget = self.editor.widget(i)
             if editor_widget:
                 font = QFont(font_family, font_size)
+                font.setWeight(QFont.Medium)
                 editor_widget.setFont(font)
 
-        # Apply word wrap
         word_wrap = self.settings.value("editor/word_wrap", False, type=bool)
         for i in range(self.editor.count()):
             editor_widget = self.editor.widget(i)
@@ -502,11 +664,117 @@ class MainWindow(QMainWindow):
                 else:
                     editor_widget.setLineWrapMode(QPlainTextEdit.NoWrap)
 
-        # Show/hide toolbar
         show_toolbar = self.settings.value("appearance/show_toolbar", True, type=bool)
-        if hasattr(self, 'toolbar'):
-            for toolbar in self.findChildren(QToolBar):
-                toolbar.setVisible(show_toolbar)
+        self.toggle_toolbar_action.setChecked(show_toolbar)
+        for toolbar in self.findChildren(QToolBar):
+            toolbar.setVisible(show_toolbar)
+        
+        self.apply_theme()
+
+    def open_terminal(self):
+        """Open integrated terminal in current file directory with Go environment"""
+        import os
+        import subprocess
+        import platform
+
+        # Get current file path
+        current_file = self.editor.current_file_path()
+        
+        if current_file:
+            # Get directory of current file
+            work_dir = os.path.dirname(current_file)
+        else:
+            # Use workspace directory or home directory
+            work_dir = os.path.expanduser("~")
+
+        # Get Go environment variables
+        env = self._get_go_environment()
+
+        # Detect OS and open appropriate terminal
+        system = platform.system()
+        
+        try:
+            if system == "Windows":
+                # Windows: Create a batch file to set environment and open terminal
+                batch_file = os.path.join(work_dir, "_vizcacha_terminal.bat")
+                with open(batch_file, 'w') as f:
+                    f.write('@echo off\n')
+                    # Set environment variables
+                    if 'GOROOT' in env:
+                        f.write(f'set GOROOT={env["GOROOT"]}\n')
+                    if 'GOPATH' in env:
+                        f.write(f'set GOPATH={env["GOPATH"]}\n')
+                    if 'PATH' in env:
+                        f.write(f'set PATH={env["PATH"]}\n')
+                    f.write(f'cd /d "{work_dir}"\n')
+                    f.write('echo VizcachaIDE Terminal - Go environment ready\n')
+                    f.write('echo.\n')
+                    f.write('go version\n')
+                    f.write('echo.\n')
+                    f.write('cmd /K\n')
+                
+                # Open CMD with batch file
+                subprocess.Popen(['cmd', '/C', 'start', 'cmd', '/K', batch_file],
+                               cwd=work_dir,
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+                
+            elif system == "Darwin":  # macOS
+                # macOS: Create a script and open Terminal
+                script_file = os.path.join(work_dir, ".vizcacha_terminal.sh")
+                with open(script_file, 'w') as f:
+                    f.write('#!/bin/bash\n')
+                    if 'GOROOT' in env:
+                        f.write(f'export GOROOT="{env["GOROOT"]}"\n')
+                    if 'GOPATH' in env:
+                        f.write(f'export GOPATH="{env["GOPATH"]}"\n')
+                    if 'PATH' in env:
+                        f.write(f'export PATH="{env["PATH"]}"\n')
+                    f.write(f'cd "{work_dir}"\n')
+                    f.write('echo "VizcachaIDE Terminal - Go environment ready"\n')
+                    f.write('go version\n')
+                    f.write('bash\n')
+                
+                os.chmod(script_file, 0o755)
+                
+                script = f'tell application "Terminal" to do script "{script_file}"'
+                subprocess.Popen(['osascript', '-e', script])
+                
+            else:  # Linux
+                # Linux: Create a script and open terminal
+                script_file = os.path.join(work_dir, ".vizcacha_terminal.sh")
+                with open(script_file, 'w') as f:
+                    f.write('#!/bin/bash\n')
+                    if 'GOROOT' in env:
+                        f.write(f'export GOROOT="{env["GOROOT"]}"\n')
+                    if 'GOPATH' in env:
+                        f.write(f'export GOPATH="{env["GOPATH"]}"\n')
+                    if 'PATH' in env:
+                        f.write(f'export PATH="{env["PATH"]}"\n')
+                    f.write(f'cd "{work_dir}"\n')
+                    f.write('echo "VizcachaIDE Terminal - Go environment ready"\n')
+                    f.write('go version\n')
+                    f.write('bash\n')
+                
+                os.chmod(script_file, 0o755)
+                
+                terminals = ['gnome-terminal', 'konsole', 'xfce4-terminal', 'xterm']
+                for terminal in terminals:
+                    try:
+                        if terminal == 'gnome-terminal':
+                            subprocess.Popen([terminal, '--', 'bash', '-c', f'bash {script_file}'])
+                        elif terminal == 'konsole':
+                            subprocess.Popen([terminal, '-e', 'bash', script_file])
+                        else:
+                            subprocess.Popen([terminal, '-e', f'bash {script_file}'])
+                        break
+                    except FileNotFoundError:
+                        continue
+            
+            self.console.append_success(f"\n[Terminal opened in: {work_dir}]\n")
+            self.console.append_success("[Go environment configured automatically]\n")
+        except Exception as e:
+            QMessageBox.warning(self, "Terminal Error", 
+                              f"Failed to open terminal:\n{str(e)}\n\nPlease open terminal manually.")
 
     def show_about(self):
         """Show About dialog"""
@@ -544,12 +812,27 @@ class MainWindow(QMainWindow):
 
     def restore_state(self):
         """Restore window state from settings"""
-        last_file = self.settings.value("last_file", "")
-        if last_file:
-            self.editor.open_file(last_file)
-
-        # Apply settings on startup
+        # Apply settings and theme FIRST, before opening files
         self.apply_current_settings()
+        
+        # Now restore all open tabs with correct theme colors
+        open_files = self.settings.value("open_files", [])
+        if isinstance(open_files, str):
+            open_files = [open_files] if open_files else []
+        
+        import os
+        for file_path in open_files:
+            if file_path and os.path.exists(file_path):
+                self.editor.open_file(file_path)
+        
+        # Restore active tab index
+        active_tab = self.settings.value("active_tab", 0, type=int)
+        if active_tab < self.editor.count():
+            self.editor.setCurrentIndex(active_tab)
+        
+        # If no files were opened, keep the default empty tab
+        if self.editor.count() == 0:
+            pass  # The default tab is already created
 
     def closeEvent(self, event):
         """Handle window close event"""
@@ -559,4 +842,15 @@ class MainWindow(QMainWindow):
             if not self.editor.check_save_needed(tab_editor):
                 event.ignore()
                 return
+        
+        # Save open files state
+        open_files = []
+        for i in range(self.editor.count()):
+            file_path = self.editor.get_file_path(i)
+            if file_path:  # Only save tabs with actual files
+                open_files.append(file_path)
+        
+        self.settings.setValue("open_files", open_files)
+        self.settings.setValue("active_tab", self.editor.currentIndex())
+        
         event.accept()

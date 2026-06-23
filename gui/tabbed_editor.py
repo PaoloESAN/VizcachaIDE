@@ -12,6 +12,8 @@ class TabbedEditor(QTabWidget):
 
     # Signal emitted when the active file changes
     active_file_changed = pyqtSignal(str)  # file_path or empty string
+    # Signal emitted when a new tab is created
+    tab_created = pyqtSignal(object)  # editor widget
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +45,10 @@ class TabbedEditor(QTabWidget):
         # Set file path as property
         editor.file_path = file_path
 
+        # Force syntax highlighting refresh if content was loaded
+        if content:
+            editor.highlighter.rehighlight()
+
         # Generate tab title
         if file_path:
             import os
@@ -61,6 +67,9 @@ class TabbedEditor(QTabWidget):
         editor.document().modificationChanged.connect(
             lambda modified: self.update_tab_title(editor, modified)
         )
+
+        # Emit signal that new tab was created
+        self.tab_created.emit(editor)
 
         return editor
 
@@ -213,6 +222,18 @@ class TabbedEditor(QTabWidget):
             File path string or None
         """
         editor = self.current_editor()
+        return editor.file_path if editor else None
+
+    def get_file_path(self, index):
+        """Get the file path of the editor at the specified index
+
+        Args:
+            index: Tab index
+
+        Returns:
+            File path string or None
+        """
+        editor = self.widget(index)
         return editor.file_path if editor else None
 
     def open_file(self, file_path):
