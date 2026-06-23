@@ -115,6 +115,10 @@ class AutocompleteWidget(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        # Store completions for filtering
+        self.all_completions = []
+        self.current_prefix = ""
+
         # Set up appearance
         self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.setFocusPolicy(Qt.NoFocus)
@@ -150,34 +154,64 @@ class AutocompleteWidget(QListWidget):
         # Connect signals
         self.itemClicked.connect(self.on_item_clicked)
 
-    def show_completions(self, completions, position):
+    def show_completions(self, completions, position, prefix=""):
         """Show autocomplete suggestions
 
         Args:
             completions: List of completion dictionaries with 'name', 'signature', 'doc', 'kind'
             position: QPoint position to show the widget
+            prefix: Current prefix being typed for filtering
         """
-        self.clear()
+        self.all_completions = completions
+        self.current_prefix = prefix.lower()
+        self.update_filtered_completions()
 
-        if not completions:
+        if self.count() == 0:
             self.hide()
             return
 
+        # Position and show
+        self.move(position)
+        self.show()
+
+    def update_filtered_completions(self):
+        """Update the list with filtered completions based on current prefix"""
+        self.clear()
+
+        if not self.all_completions:
+            return
+
+        # Filter by prefix
+        filtered = []
+        for completion in self.all_completions:
+            name = completion.get('name', '')
+            if name.lower().startswith(self.current_prefix):
+                filtered.append(completion)
+
         # Add items
-        for completion in completions:
+        for completion in filtered:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, completion)
             item.setText(completion.get('name', ''))
             self.addItem(item)
 
-        # Select first item
+        # Select first
         if self.count() > 0:
             self.setCurrentRow(0)
 
-        # Position and show
-        self.move(position)
-        self.show()
-        self.setFocus()
+    def filter_completions(self, prefix):
+        """Filter completions by prefix
+
+        Args:
+            prefix: The prefix to filter by
+        """
+        self.current_prefix = prefix.lower()
+        self.update_filtered_completions()
+
+        if self.count() == 0:
+            self.hide()
+            return False
+        return True
 
     def on_item_clicked(self, item):
         """Handle item click"""
@@ -188,8 +222,8 @@ class AutocompleteWidget(QListWidget):
 
     def keyPressEvent(self, event):
         """Handle key press events"""
-        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-            # Accept current selection
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter or event.key() == Qt.Key_Tab:
+            # Accept selection
             current_item = self.currentItem()
             if current_item:
                 data = current_item.data(Qt.UserRole)
@@ -203,8 +237,7 @@ class AutocompleteWidget(QListWidget):
             # Navigate
             super().keyPressEvent(event)
         else:
-            # Pass to parent editor
-            self.hide()
+            # Let editor handle and keep popup visible
             if self.parent():
                 self.parent().keyPressEvent(event)
 
